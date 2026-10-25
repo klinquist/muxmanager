@@ -1,0 +1,15 @@
+PRODUCT_BUNDLE_IDENTIFIER = com.linquist.muxmanager
+CLOUD_CONTAINER_IDENTIFIER = iCloud.com.linquist.muxmanager
+IPHONEOS_DEPLOYMENT_TARGET = 17.0
+SWIFT_VERSION = 5.0
+SWIFT_STRICT_CONCURRENCY = targeted
+TARGETED_DEVICE_FAMILY = 1,2
+MARKETING_VERSION = 0.1.0
+CURRENT_PROJECT_VERSION = 1
+CODE_SIGN_STYLE = Automatic
+INFOPLIST_FILE = Config/Info.plist
+CODE_SIGN_ENTITLEMENTS = Config/MuxManager.entitlements
+ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon
+ENABLE_USER_SCRIPT_SANDBOXING = YES
+// Set your team, bundle ID, and registered container in the ignored local file.
+#include? "Local.xcconfig"

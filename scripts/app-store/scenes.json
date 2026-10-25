@@ -1,0 +1,27 @@
+[
+  {
+    "id": "smart",
+    "headline": "Your terminal.\\nPhone-friendly.",
+    "detail": "Read with smart reflow. Keep your remote window size."
+  },
+  {
+    "id": "hosts",
+    "headline": "Every host.\\nEvery window.",
+    "detail": "Browse tmux sessions and switch windows by name."
+  },
+  {
+    "id": "original",
+    "headline": "Keep the grid.\\nKeep control.",
+    "detail": "Original preserves the remote layout for terminal tools."
+  },
+  {
+    "id": "fit",
+    "headline": "A size for\\nevery screen.",
+    "detail": "Choose when to resize. Pinch to adjust your text."
+  },
+  {
+    "id": "connection",
+    "headline": "Connect directly.\\nOr jump inside.",
+    "detail": "Saved SSH connections, keys, and bastion hosts."
+  }
+]
