@@ -127,3 +127,5 @@ The project is available under the [MIT license](LICENSE). Third-party libraries
 ## App Store media tooling
 
 The dependency-free capture, composition, and App Store API tooling lives in `scripts/app-store`. See its [usage instructions](scripts/app-store/README.md). Generated output, API receipts, credentials, and local signing overrides are ignored by Git. Marketing screenshots use Debug-only fixtures that do not connect to hosts or read real saved data.
+
+To upload a new signed build from a normal macOS Terminal, set your local `ASC_KEY_ID`, `ASC_ISSUER_ID`, and optional `ASC_KEY_PATH`, increment the version/build in `Config/Base.xcconfig`, then run `./scripts/upload-app-store-build.sh`. The script archives, exports with Apple’s system packaging tools, and uploads using API-key authentication. Export compliance is assessed separately for the actual encryption and distribution territories; the script does not automatically declare the app exempt or submit App Review.
