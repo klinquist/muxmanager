@@ -28,7 +28,7 @@ Set `ASC_KEY_ID`, `ASC_ISSUER_ID`, and optionally `ASC_KEY_PATH` in your local e
 ruby scripts/app-store/upload.rb --inspect
 ruby scripts/app-store/upload.rb --upload
 # For copy/URL changes after media has been uploaded:
-ruby scripts/app-store/upload.rb --metadata-only
+ruby scripts/app-store/upload.rb --upload --metadata-only
 ```
 
 The uploader resolves placement identifiers and limits from Apple’s reference catalog, validates dimensions and provenance, uploads images/videos, orders screenshots and previews separately, and reads back metadata and placement IDs. State files allow an interrupted run to resume without duplicating successful assets. It does not submit a review or release an app. Confirm the draft version in App Store Connect before running; update the example metadata and public URLs for your own fork.
