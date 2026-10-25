@@ -8,6 +8,9 @@ final class LibraryStore: ObservableObject {
     @Published private(set) var profiles: [ConnectionProfile] = []
     @Published private(set) var keys: [SSHKeyRecord] = []
     @Published var error: String?
+    @Published private(set) var lastSyncAttempt: Date?
+    @Published private(set) var lastSuccessfulSync: Date?
+    @Published private(set) var lastSyncError: String?
     let secrets = SecretStore()
     private let directory: URL
     private let cloud: CloudSync?
@@ -64,6 +67,27 @@ final class LibraryStore: ObservableObject {
     var visibleProfiles: [ConnectionProfile] { profiles.filter { !$0.deleted }.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending } }
     var visibleKeys: [SSHKeyRecord] { keys.filter { !$0.deleted } }
 
+    var syncDiagnostics: String {
+        let identifier = Bundle.main.object(forInfoDictionaryKey: "CloudContainerIdentifier") as? String ?? "iCloud.com.linquist.muxmanager"
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?"
+        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "?"
+        let formatter = ISO8601DateFormatter()
+        return """
+        Mux Manager \(version) (\(build)) — iCloud diagnostics
+        Container: \(identifier)
+        Saved connections on this device: \(visibleProfiles.count)
+        SSH key metadata on this device: \(visibleKeys.count)
+        Last attempt: \(lastSyncAttempt.map { formatter.string(from: $0) } ?? "Not attempted this launch")
+        Last success: \(lastSuccessfulSync.map { formatter.string(from: $0) } ?? "No successful sync this launch")
+        Last error: \(lastSyncError ?? "None recorded")
+
+        Sync runs automatically while the app is active and after edits.
+        Xcode development builds and TestFlight/App Store builds normally use separate CloudKit databases. Development records are not copied when a schema is deployed.
+        Credentials sync separately through iCloud Keychain.
+        This report excludes saved host details, terminal content, and credentials.
+        """
+    }
+
     func save(_ profile: ConnectionProfile, password: String?) throws {
         try profile.validate(in: profiles)
         if let password { try secrets.write(Data(password.utf8), account: "password:\(profile.id)") }
@@ -118,6 +142,7 @@ final class LibraryStore: ObservableObject {
     private func synchronize() async {
         guard let cloud, !syncing, !Task.isCancelled else { return }
         syncing = true
+        lastSyncAttempt = Date()
         defer { syncing = false }
         let startingRevision = revision
         do {
@@ -127,9 +152,11 @@ final class LibraryStore: ObservableObject {
             let mergedKeys = ProfileMerge.keys(local: keys, remote: remote.keys)
             try persist(profiles: mergedProfiles, keys: mergedKeys)
             profiles = mergedProfiles; keys = mergedKeys
+            lastSuccessfulSync = Date(); lastSyncError = nil
             if startingRevision != revision { scheduleSync() }
         } catch {
             if !Task.isCancelled {
+                lastSyncError = error.localizedDescription
                 logger.debug("Automatic sync deferred: \(error.localizedDescription, privacy: .private)")
             }
         }

@@ -8,6 +8,7 @@ struct RootView: View {
     @State private var preferredColumn: NavigationSplitViewColumn = .sidebar
     @State private var editingProfile: ConnectionProfile?
     @State private var showLicenses = false
+    @State private var showSyncDiagnostics = false
     @State private var diagnosticWorkspace: HostWorkspace?
     @State private var managementRequest: ManagementRequest?
 
@@ -65,6 +66,7 @@ struct RootView: View {
                             Button("Connection diagnostics", systemImage: "stethoscope") { diagnosticWorkspace = workspace }
                         }
                         Button("Open source licenses", systemImage: "doc.text") { showLicenses = true }
+                        Button("iCloud diagnostics", systemImage: "icloud") { showSyncDiagnostics = true }
                         Link("Support", destination: URL(string: "https://klinquist.github.io/muxmanager/support/")!)
                         Link("Privacy policy", destination: URL(string: "https://klinquist.github.io/muxmanager/privacy/")!)
                         Link("Source code", destination: URL(string: "https://github.com/klinquist/muxmanager")!)
@@ -82,7 +84,11 @@ struct RootView: View {
                     ContentUnavailableView {
                         Label("Your windows, anywhere", systemImage: "terminal")
                     } description: {
-                        Text("Add a host to connect over SSH and browse its tmux windows.")
+                        if library.lastSyncError != nil {
+                            Text("iCloud could not sync your saved connections. Open Info → iCloud diagnostics for details. You can still add a host on this device.")
+                        } else {
+                            Text("Add a host to connect over SSH and browse its tmux windows.")
+                        }
                     } actions: {
                         Button("Add connection") { editingProfile = ConnectionProfile() }.buttonStyle(.borderedProminent)
                     }.allowsHitTesting(true)
@@ -112,6 +118,7 @@ struct RootView: View {
         }
         .sheet(item: $editingProfile) { profile in ConnectionEditor(profile: profile) }
         .sheet(isPresented: $showLicenses) { OpenSourceLicensesView() }
+        .sheet(isPresented: $showSyncDiagnostics) { CloudSyncDiagnosticsView() }
         .sheet(item: $diagnosticWorkspace) { ConnectionDiagnosticsView(workspace: $0) }
         .sheet(item: $managementRequest) { request in
             ManagementSheet(workspace: request.workspace, action: request.action) { managementRequest = nil }
@@ -119,6 +126,34 @@ struct RootView: View {
         .alert("Mux Manager", isPresented: Binding(get: { library.error != nil }, set: { if !$0 { library.error = nil } })) {
             Button("OK") { library.error = nil }
         } message: { Text(library.error ?? "") }
+    }
+}
+
+struct CloudSyncDiagnosticsView: View {
+    @EnvironmentObject private var library: LibraryStore
+    @Environment(\.dismiss) private var dismiss
+    @State private var copied = false
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                Text(library.syncDiagnostics)
+                    .font(.system(.footnote, design: .monospaced))
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding()
+            }
+            .navigationTitle("iCloud diagnostics")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } }
+                ToolbarItem(placement: .primaryAction) {
+                    Button(copied ? "Copied" : "Copy report") {
+                        UIPasteboard.general.string = library.syncDiagnostics; copied = true
+                    }
+                }
+            }
+        }
     }
 }
 

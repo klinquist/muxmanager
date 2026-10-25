@@ -29,7 +29,7 @@ Open `MuxManager.xcodeproj` and select the **MuxManager** scheme. The deployment
 
 1. Select your development team in Signing & Capabilities.
 2. Register and select the CloudKit container `iCloud.com.linquist.muxmanager`. If you use another container, set `CLOUD_CONTAINER_IDENTIFIER` in `Config/Local.xcconfig` (copy the example) or the target's build settings.
-3. In the CloudKit development schema, create record type **MuxRecord** with fields `kind` (String), `payload` (Bytes), and `modifiedAt` (Date). Enable a Queryable index on `recordName` so the private database can be queried. Deploy the schema to production before TestFlight.
+3. In the CloudKit development schema, create record type **MuxRecord** with fields `kind` (String), `payload` (Bytes), and `modifiedAt` (Date). Enable a Queryable index on `recordName` (the schema field `___recordID`) so the private database can be queried. Deploy the schema, including its indexes, to production before TestFlight. The first sync queries this type before saving records, so a missing schema prevents upload even in Development.
 4. Build and run on an iPhone or iPad. Grant local-network access when connecting to a LAN host. Sign in to iCloud and enable iCloud Keychain to test sync between devices.
 
 Sync runs automatically when the app becomes active, after edits, and periodically while active to receive changes and retry failures. There is no manual sync control or routine sync status in the interface. Saved connections work locally when CloudKit is unavailable. Settings and public-key metadata use the private CloudKit database. Passwords, private keys, and imported key passphrases use synchronizable Keychain items. Drafts, output, and host trust decisions never enter CloudKit. The app does not require an OpenAI account or API key; it interacts with the Codex process already running on your computer.
@@ -102,6 +102,10 @@ There are **two direct external libraries and twelve resolved external packages 
 No UI, persistence, analytics, reflow, or conversation parsing packages are used. Third-party licenses remain in their SwiftPM checkouts; `THIRD_PARTY_NOTICES.md` lists the upstream projects and license families.
 
 ## Checks
+
+For an empty list on another device, open **Info → iCloud diagnostics** to see the last attempted/successful sync, container identifier, local record counts, and the latest error. Reports omit connection values and credentials. Sync remains automatic. The empty state explains a failed sync instead of suggesting that no saved connections exist.
+
+Xcode development builds and TestFlight/App Store builds normally use separate CloudKit databases. Deploying the schema copies record types, fields, and indexes, **not saved user records**. Both devices need the same Apple Account, iCloud enabled for the app, and builds using the same CloudKit environment. Keep the original app installed while resolving a sync problem so its local connections remain available.
 
 For connection/discovery problems, open **Info → Connection diagnostics** on the main page, or **⋯ → Connection diagnostics** in a workspace. Reconnect to record the SSH route, target identity, selected environment fields, tmux path/version/socket, raw discovery rows, parsed counts, and session selection. Use **Refresh** for a fresh read-only discovery pass and **Copy log** to share the report manually. Unchanged polling results are suppressed; the log is bounded and stays in memory. It includes host/user identifiers, paths, and session/window names, but excludes passwords, private keys, pane contents, and submitted input. With multiple sessions, use the session picker before expecting a window list.
 
