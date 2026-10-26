@@ -3,6 +3,20 @@
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 cd "$ROOT"
+# Flags allow the same release workflow from automation without shell-wide
+# environment changes. Private key contents are never passed on the command line.
+while [[ $# -gt 0 ]]; do
+  [[ $# -ge 2 ]] || { echo "Missing value for $1" >&2; exit 1; }
+  case "$1" in
+    --key-id) ASC_KEY_ID=$2 ;;
+    --issuer-id) ASC_ISSUER_ID=$2 ;;
+    --key-path) ASC_KEY_PATH=$2 ;;
+    --release-dir) RELEASE_DIR=$2 ;;
+    --derived-data) DERIVED_DATA=$2 ;;
+    *) echo "Unknown option: $1" >&2; exit 1 ;;
+  esac
+  shift 2
+done
 : "${ASC_KEY_ID:?Set ASC_KEY_ID locally}"
 : "${ASC_ISSUER_ID:?Set ASC_ISSUER_ID locally}"
 ASC_KEY_PATH=${ASC_KEY_PATH:-"$HOME/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8"}

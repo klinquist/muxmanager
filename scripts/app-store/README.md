@@ -34,3 +34,5 @@ ruby scripts/app-store/upload.rb --upload --metadata-only
 The uploader resolves placement identifiers and limits from Apple’s reference catalog, validates dimensions and provenance, uploads images/videos, orders screenshots and previews separately, and reads back metadata and placement IDs. State files allow an interrupted run to resume without duplicating successful assets. It does not submit a review or release an app. Confirm the draft version in App Store Connect before running; update the example metadata and public URLs for your own fork.
 
 Generated media, diagnostics, API responses, and receipts live under the ignored `output/` directory. The public README uses only selected screenshots copied into `docs/assets/`.
+
+For binary releases, `scripts/upload-app-store-build.sh` also accepts `--key-id`, `--issuer-id`, `--key-path`, `--release-dir`, and `--derived-data` instead of the corresponding environment variables. Pass only the private key's local path; its contents stay on disk. The script sets Apple's system-tool path for export to avoid Homebrew rsync packaging conflicts. Build upload does not submit App Review.
