@@ -85,7 +85,7 @@ def main():
         try:
             tmux("-f", "/dev/null", "new-session", "-d", "-s", "primary", "-x", "160", "-y", "40", "/bin/sh")
             session_format = "#{session_id}\t#{q:session_name}"
-            old_output = subprocess.check_output([executable, "-S", socket, "list-sessions", "-F", session_format], text=True, env=SSH_ENVIRONMENT, timeout=5).strip()
+            old_output = subprocess.check_output([executable, "-S", socket, "list-sessions", "-F", session_format], text=True, stderr=subprocess.PIPE, env=SSH_ENVIRONMENT, timeout=5).strip()
             assert "\t" not in old_output and "_primary" in old_output, ("Expected legacy locale sanitization", old_output)
             session = tmux("list-sessions", "-F", session_format)
             assert session.split("\t") == ["$0", "primary"], ("UTF-8 discovery failed", session)
@@ -97,6 +97,14 @@ def main():
 
             phone = Control(executable, socket, True)
             clients.append(phone)
+            # Background parking silences only this client and preserves ignore-size.
+            phone.command('refresh-client -f "no-output"')
+            flags = phone.command("display-message -p '#{client_flags}'")[0].split(",")
+            assert "no-output" in flags and "ignore-size" in flags, flags
+            assert "no-output" not in desktop.command("display-message -p '#{client_flags}'")[0].split(",")
+            phone.command('refresh-client -f "!no-output"')
+            flags = phone.command("display-message -p '#{client_flags}'")[0].split(",")
+            assert "no-output" not in flags and "ignore-size" in flags, flags
             assert phone.command('list-sessions -F "' + session_format + '"') == [session]
             window_format = "#{window_id}\t#{window_index}\t#{q:window_name}\t#{pane_id}\t#{pane_width}\t#{pane_height}\t#{q:pane_current_command}"
             window_rows = phone.command('list-windows -F "' + window_format + '"')
@@ -124,7 +132,7 @@ def main():
             payload = b"# literal text; kill-server\n"
             phone.command(f"send-keys -H -t {pane} " + " ".join(f"{byte:02x}" for byte in payload))
             assert phone.command("list-sessions -F '#{session_name}'") == ["primary"]
-            print("PASS: locale-independent discovery, Unicode names, ignore-size attachment, independent window selection, targeted Fit, policy restoration, literal input")
+            print("PASS: locale-independent discovery, Unicode names, background output parking, ignore-size attachment, independent window selection, targeted Fit, policy restoration, literal input")
         except subprocess.CalledProcessError as failure:
             raise SystemExit("Could not run isolated tmux smoke test: " + failure.stderr.strip())
         finally:

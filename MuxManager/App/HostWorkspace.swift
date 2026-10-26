@@ -52,6 +52,7 @@ final class HostWorkspace: ObservableObject, Identifiable {
     private let transport = SSHTransport()
     private var control: ControlChannel?
     private var pollTask: Task<Void, Never>?
+    private var pollingGeneration = UUID()
     private var drafts: [String: String] = [:]
     private var lease: ResizeLease?
     private var serverIdentity = ""
@@ -60,6 +61,13 @@ final class HostWorkspace: ObservableObject, Identifiable {
     private var viewport = (columns: 44, rows: 25)
     private var fittedViewport: (columns: Int, rows: Int)?
     private var connectionGeneration = UUID()
+    private var connectionSetupGeneration: UUID?
+    private(set) var connectionIntent = UUID()
+    private var isBackgrounded = false
+    private var backgroundGeneration = UUID()
+    private var backgroundPreparation: (id: UUID, task: Task<Void, Never>)?
+    private var resumingFromBackground = false
+    private var backgroundOutputPaused = false
     private var attachmentGeneration = UUID()
     private var inputTail: Task<Void, Never>?
     private var draftSaveTask: Task<Void, Never>?
@@ -194,6 +202,7 @@ final class HostWorkspace: ObservableObject, Identifiable {
 
     var selectedWindow: RemoteWindow? { windows.first { $0.id == selectedWindowID } }
     var isConnected: Bool { state == .connected }
+    var shouldRetainInBackground: Bool { isConnected || state == .connecting || resumingFromBackground }
     var canConnect: Bool {
         switch state {
         case .disconnected, .failed: return true
@@ -250,12 +259,16 @@ final class HostWorkspace: ObservableObject, Identifiable {
         if parsed < lines.count { record("tmux", "WARNING: \(lines.count - parsed) discovery rows did not match the expected tab-separated format") }
     }
 
-    func connect() async {
+    func connect(automatically: Bool = false) async {
         guard canConnect else { return }
+        if !automatically { connectionIntent = UUID(); isBackgrounded = false }
         state = .connecting; error = nil; challenge = nil
+        backgroundOutputPaused = false
         lastSessionLines = nil; lastWindowResult = nil; lastSessionFailure = nil; lastWindowFailure = nil
         record("connection", "New attempt for \(profile.name)")
         let generation = UUID(); connectionGeneration = generation
+        connectionSetupGeneration = generation
+        defer { if connectionSetupGeneration == generation { connectionSetupGeneration = nil } }
         do {
             await transport.disconnect(); control = nil
             try await transport.connect(profile: profile, library: library) { [weak self] challenge in
@@ -277,7 +290,9 @@ final class HostWorkspace: ObservableObject, Identifiable {
             } else {
                 record("selection", "No sessions found on the default tmux server for this SSH user/environment")
             }
-            startPolling()
+            connectionSetupGeneration = nil
+            if isBackgrounded { await prepareForBackground(expectedIntent: connectionIntent) }
+            if !isBackgrounded && !resumingFromBackground { startPolling() }
         } catch {
             if generation == connectionGeneration { state = .failed(error.localizedDescription) }
         }
@@ -292,7 +307,9 @@ final class HostWorkspace: ObservableObject, Identifiable {
         } catch { self.error = error.localizedDescription }
     }
 
-    func disconnect() async {
+    func disconnect(automatically: Bool = false) async {
+        // Explicit Disconnect also cancels a pending automatic foreground resume.
+        if !automatically { connectionIntent = UUID() }
         guard state != .disconnecting, state != .disconnected else { return }
         record("connection", "Disconnect requested")
         reconnectSessionID = selectedSessionID; reconnectWindowID = selectedWindowID
@@ -304,11 +321,114 @@ final class HostWorkspace: ObservableObject, Identifiable {
             self.error = "Resize restoration is pending: \(error.localizedDescription)"
         }
         await transport.disconnect(); control = nil
+        backgroundOutputPaused = false
         windows = []; sessions = []; selectedWindowID = nil; selectedSessionID = nil
         captureDiagnostics = "No terminal capture yet"; lastCaptureSignature = nil
         joinedCapture = ""; terminalCapture = ""; terminalLiveRow = 0; snapshotRevision += 1
         draft = ""; directInput = false; controlModifier = false
         displayMode = .smart; fittedViewport = nil; state = .disconnected
+    }
+
+    func pauseForBackground() {
+        isBackgrounded = true
+        backgroundGeneration = UUID()
+        pollingGeneration = UUID()
+        draftSaveTask?.cancel(); persistDrafts()
+        if shouldRetainInBackground {
+            record("lifecycle", "Backgrounded; retaining SSH for up to 10 minutes, subject to iOS suspension and network availability")
+        }
+    }
+
+    func unpauseAfterBackground() { isBackgrounded = false }
+
+    func prepareForBackground(expectedIntent: UUID) async {
+        let generation = backgroundGeneration
+        // Authentication can finish while the app-level preparation is running.
+        // Share that work so foregrounding waits for every output-pause command.
+        while let previous = backgroundPreparation {
+            await previous.task.value
+            if previous.id == generation { return }
+            if backgroundPreparation?.id == previous.id { backgroundPreparation = nil }
+        }
+        guard isBackgrounded, backgroundGeneration == generation, connectionIntent == expectedIntent else { return }
+        let task = Task { [weak self] in
+            guard let self else { return }
+            await self.parkConnection(expectedIntent: expectedIntent, generation: generation)
+        }
+        backgroundPreparation = (generation, task)
+        await task.value
+        if backgroundPreparation?.id == generation { backgroundPreparation = nil }
+    }
+
+    private func parkConnection(expectedIntent: UUID, generation background: UUID) async {
+        // Let an in-flight read finish. Cancelling a ControlChannel request can
+        // close the channel to prevent response misassociation.
+        await pollTask?.value
+        guard isBackgrounded, backgroundGeneration == background, connectionIntent == expectedIntent else { return }
+        pollTask = nil
+        await inputTail?.value
+        while isBackgrounded, backgroundGeneration == background, connectionIntent == expectedIntent, busy || sending {
+            do { try await Task.sleep(for: .milliseconds(50)) } catch { return }
+        }
+        guard isBackgrounded, backgroundGeneration == background, connectionIntent == expectedIntent, isConnected else { return }
+        let generation = connectionGeneration
+        do {
+            try await restoreSize()
+            guard generation == connectionGeneration, isBackgrounded, backgroundGeneration == background else { return }
+            if displayMode == .fit { displayMode = .original }
+            if let control {
+                _ = try await control.command("refresh-client -f \(TmuxCommand.quote("no-output"))")
+                guard generation == connectionGeneration else { return }
+                backgroundOutputPaused = true
+            }
+            persistDrafts()
+            record("lifecycle", "Polling paused; app-owned Fit sizing restored; SSH remains open")
+        } catch {
+            record("lifecycle", "Background preparation: \(error.localizedDescription). Pending resize recovery remains saved.")
+        }
+    }
+
+    func backgroundTimeExpired() {
+        record("lifecycle", "iOS background runtime ended; leaving SSH parked and checking it on return")
+    }
+
+    func resumeFromBackground(forceReconnect: Bool) async {
+        isBackgrounded = false
+        resumingFromBackground = true
+        defer { resumingFromBackground = false }
+        let intent = connectionIntent
+        await backgroundPreparation?.task.value
+        guard !isBackgrounded, connectionIntent == intent else { return }
+        // An in-progress connection starts polling itself after discovery.
+        if connectionSetupGeneration != nil && !forceReconnect { return }
+        if isConnected && !forceReconnect {
+            let generation = connectionGeneration
+            do {
+                if backgroundOutputPaused, let control {
+                    _ = try await control.command("refresh-client -f \(TmuxCommand.quote("!no-output"))")
+                    backgroundOutputPaused = false
+                }
+                guard !isBackgrounded, connectionIntent == intent, connectionGeneration == generation else { return }
+                try await discoverSessions(forceLog: true)
+                guard !isBackgrounded, connectionIntent == intent, connectionGeneration == generation else { return }
+                try await discoverWindows(forceLog: true)
+                try await refreshSnapshot()
+                guard !isBackgrounded, connectionIntent == intent, connectionGeneration == generation else { return }
+                record("lifecycle", "Foreground check succeeded; reusing the existing SSH connection")
+                startPolling()
+                return
+            } catch {
+                guard !isBackgrounded, connectionIntent == intent else { return }
+                record("lifecycle", "Retained connection is unavailable: \(error.localizedDescription); reconnecting")
+            }
+        } else if forceReconnect {
+            record("lifecycle", "10-minute background retention elapsed; reconnecting")
+        }
+        guard !isBackgrounded, connectionIntent == intent else { return }
+        await disconnect(automatically: true)
+        guard !isBackgrounded, connectionIntent == intent else { return }
+        await connect(automatically: true)
+        if !isBackgrounded, connectionIntent == intent, isConnected { startPolling() }
     }
 
     func selectSession(_ id: String) async {
@@ -389,7 +509,7 @@ final class HostWorkspace: ObservableObject, Identifiable {
         let generation = connectionGeneration
         let current = try await sizing(window.id)
         try Task.checkCancellation()
-        guard generation == connectionGeneration, isConnected else { throw MuxError.message("The connection changed before resizing.") }
+        guard generation == connectionGeneration, isConnected, !isBackgrounded else { throw MuxError.message("The connection changed or the app backgrounded before resizing.") }
         if let lease, !lease.mayRestore(current: current, serverIdentity: serverIdentity) {
             self.lease = nil; try persistLease(); fittedViewport = nil; displayMode = .original
             throw MuxError.message("The window was resized by another client. Fit mode has stopped; choose Fit device again to take control.")
@@ -689,7 +809,7 @@ final class HostWorkspace: ObservableObject, Identifiable {
 
     private func refreshSnapshot(forceLog: Bool = false) async throws {
         let generation = connectionGeneration
-        guard let pane = selectedWindow?.paneID, !refreshInProgress else { return }
+        guard !isBackgrounded, let pane = selectedWindow?.paneID, !refreshInProgress else { return }
         refreshInProgress = true; dirty = false
         defer { refreshInProgress = false }
         let metadata = try await command("display-message -p -t \(TmuxCommand.quote(pane)) '#{pane_width} #{pane_height} #{cursor_x} #{cursor_y} #{keypad_cursor_flag} #{keypad_flag} #{cursor_flag} #{history_size} #{history_limit} #{alternate_on}'")
@@ -728,7 +848,7 @@ final class HostWorkspace: ObservableObject, Identifiable {
         case .output(let pane, _): if pane == selectedWindow?.paneID { dirty = true }
         case .notification(let message):
             dirty = true
-            if message.hasPrefix("%window-close ") || message.hasPrefix("%unlinked-window-close ") {
+            if !isBackgrounded && (message.hasPrefix("%window-close ") || message.hasPrefix("%unlinked-window-close ")) {
                 Task {
                     do { try await discoverWindows() }
                     catch { record("tmux", "Window-close refresh: \(error.localizedDescription)") }
@@ -742,6 +862,7 @@ final class HostWorkspace: ObservableObject, Identifiable {
             selectedWindowID = nil; selectedSessionID = nil; windows = []; sessions = []
             joinedCapture = ""; terminalCapture = ""; snapshotRevision += 1; displayMode = .smart
             if hadWindow { closedWindowRevision += 1 }
+            if isBackgrounded { return }
             Task {
                 do { try await discoverSessions(forceLog: true) }
                 catch { record("tmux", "Session-exit refresh: \(error.localizedDescription)") }
@@ -753,17 +874,20 @@ final class HostWorkspace: ObservableObject, Identifiable {
         }
     }
     private func startPolling() {
+        guard !isBackgrounded else { return }
         pollTask?.cancel()
+        let generation = UUID(); pollingGeneration = generation
         pollTask = Task { [weak self] in
             var ticks = 0
             while !Task.isCancelled {
                 do { try await Task.sleep(nanoseconds: 300_000_000) } catch { break }
-                guard let self, self.isConnected else { break }
+                guard let self, self.isConnected, !self.isBackgrounded, self.pollingGeneration == generation else { break }
                 if self.busy { continue }
                 do {
                     ticks += 1
                     if ticks % 10 == 0 {
                         try await self.discoverSessions(); try await self.discoverWindows()
+                        guard !self.isBackgrounded, self.pollingGeneration == generation else { break }
                         if self.displayMode == .fit, let lease = self.lease {
                             let current = try await self.sizing(lease.windowID)
                             if !lease.mayRestore(current: current, serverIdentity: self.serverIdentity) {
