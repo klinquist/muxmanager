@@ -97,6 +97,7 @@ final class TerminalContainer: UIView {
     var onManualScroll: (() -> Void)?
     private var readingOffset: CGPoint?
     private var applyingSnapshot = false
+    private var aligningLive = false
     override init(frame: CGRect) {
         super.init(frame: frame)
         backgroundColor = UIColor(red: 0.035, green: 0.055, blue: 0.07, alpha: 1)
@@ -108,10 +109,18 @@ final class TerminalContainer: UIView {
         addSubview(horizontal); horizontal.addSubview(terminal)
         terminal.afterLayout = { [weak self] in self?.pinLiveOffset() }
         terminal.manualOffsetChanged = { [weak self] offset in
-            guard let self, !self.followLive, !self.applyingSnapshot else { return }
-            self.readingOffset = offset
+            guard let self, !self.applyingSnapshot, !self.aligningLive else { return }
+            // Observe actual vertical movement. A pan's initial velocity can be
+            // zero; waiting for a direction at .began can leave Live enabled.
+            let height = min(self.terminal.contentSize.height, CGFloat(self.liveRow + 1) * ceil(self.terminal.font.lineHeight))
+            let inset = max(0, self.terminal.bounds.height - height)
+            let bottom = TerminalViewport.bottomOffset(contentHeight: height, viewportHeight: self.terminal.bounds.height, topInset: inset)
+            if self.followLive, offset.y < bottom - 1 {
+                self.followLive = false
+                self.onManualScroll?()
+            }
+            if !self.followLive { self.readingOffset = offset }
         }
-        terminal.panGestureRecognizer.addTarget(self, action: #selector(terminalPanned))
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
     override func layoutSubviews() {
@@ -127,20 +136,17 @@ final class TerminalContainer: UIView {
         pinLiveOffset()
     }
     func showLive() {
+        guard !terminal.isTracking, !terminal.isDragging else { return }
         // Update the emulator's scroll state as well as UIKit's pixel offset.
+        aligningLive = true
         terminal.scroll(toPosition: 1)
         pinLiveOffset()
+        aligningLive = false
         DispatchQueue.main.async { [weak self] in
             guard let self, self.followLive else { return }
+            self.aligningLive = true
+            defer { self.aligningLive = false }
             self.layoutIfNeeded(); self.terminal.layoutIfNeeded(); self.pinLiveOffset()
-        }
-    }
-    @objc private func terminalPanned() {
-        let velocity = terminal.panGestureRecognizer.velocity(in: terminal)
-        if terminal.panGestureRecognizer.state == .began, abs(velocity.y) > abs(velocity.x) {
-            followLive = false
-            readingOffset = terminal.contentOffset
-            onManualScroll?()
         }
     }
     func applySnapshot(_ capture: String) {
@@ -331,8 +337,10 @@ final class BottomContentController<Content: View>: UIViewController, UIScrollVi
         scroll.pinToBottom()
     }
     func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
-        let velocity = scrollView.panGestureRecognizer.velocity(in: scrollView)
-        if abs(velocity.y) > abs(velocity.x) { scroll.followsLive = false; onManualScroll?() }
+        // This view scrolls only vertically. UIKit can report zero velocity at
+        // the start of a slow drag, which must still pause Live following.
+        scroll.followsLive = false
+        onManualScroll?()
     }
 }
 
@@ -376,3 +384,47 @@ final class KeyInputView: UIView, UIKeyInput {
         if let byte = command.input?.utf8.first { onInput?(Data([byte & 0x1f])) }
     }
 }
+
+#if DEBUG
+/// Native scroll callback regression check using isolated 2,036-row fixtures.
+@MainActor
+enum HistoryScrollValidation {
+    static func writeReport() {
+        var metrics: [[String: Any]] = []
+        @MainActor func inspect(_ view: UIView) {
+            if let scroll = view as? UIScrollView {
+                var values: [String: Any] = ["view": String(describing: type(of: scroll)), "height": scroll.bounds.height,
+                                "contentHeight": scroll.contentSize.height, "offset": scroll.contentOffset.y,
+                                "scrollEnabled": scroll.isScrollEnabled]
+                if let following = scroll as? FollowingScrollView {
+                    scroll.delegate?.scrollViewWillBeginDragging?(scroll)
+                    values["zeroVelocityDragPausesLive"] = !following.followsLive
+                    let target = max(0, scroll.contentOffset.y - 2 * scroll.bounds.height)
+                    scroll.setContentOffset(CGPoint(x: 0, y: target), animated: false)
+                    scroll.layoutIfNeeded()
+                    values["holdsTwoPagesBack"] = abs(scroll.contentOffset.y - target) < 1
+                    scroll.setContentOffset(.zero, animated: false)
+                    scroll.layoutIfNeeded()
+                    values["reachesOldestLine"] = abs(scroll.contentOffset.y) < 1
+                } else if let terminal = scroll as? PinnedTerminalView {
+                    let target = max(0, scroll.contentOffset.y - 2 * scroll.bounds.height)
+                    terminal.manualOffsetChanged?(CGPoint(x: scroll.contentOffset.x, y: target))
+                    scroll.setContentOffset(CGPoint(x: scroll.contentOffset.x, y: target), animated: false)
+                    scroll.layoutIfNeeded()
+                    values["holdsTwoPagesBack"] = abs(scroll.contentOffset.y - target) < 1
+                    terminal.manualOffsetChanged?(.zero)
+                    scroll.setContentOffset(.zero, animated: false)
+                    scroll.layoutIfNeeded()
+                    values["reachesOldestLine"] = abs(scroll.contentOffset.y) < 1
+                }
+                metrics.append(values)
+            }
+            for child in view.subviews { inspect(child) }
+        }
+        for window in UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }).flatMap(\.windows) { inspect(window) }
+        if let data = try? JSONSerialization.data(withJSONObject: metrics, options: .prettyPrinted) {
+            try? data.write(to: FileManager.default.temporaryDirectory.appendingPathComponent("mux-scroll-report.json"))
+        }
+    }
+}
+#endif

@@ -7,6 +7,7 @@ struct WorkspaceView: View {
     @State private var action: ManagementAction?
     @State private var showDiagnostics = false
     @State private var follow = true
+    @State private var readingCapture: String?
     @State private var liveToken = 0
     @State private var magnificationStart: Double?
     @FocusState private var composerFocused: Bool
@@ -19,9 +20,9 @@ struct WorkspaceView: View {
                 GeometryReader { geometry in
                     ZStack(alignment: .bottomTrailing) {
                         if workspace.conversation {
-                            ConversationContent(capture: workspace.joinedCapture, fontSize: workspace.fontSize, follow: $follow, liveToken: liveToken)
+                            ConversationContent(capture: readingCapture ?? workspace.joinedCapture, fontSize: workspace.fontSize, follow: $follow, liveToken: liveToken)
                         } else if workspace.displayMode == .smart {
-                            SmartContent(capture: workspace.joinedCapture, fontSize: workspace.fontSize, follow: $follow, liveToken: liveToken)
+                            SmartContent(capture: readingCapture ?? workspace.joinedCapture, fontSize: workspace.fontSize, follow: $follow, liveToken: liveToken)
                         } else {
                             TerminalCanvas(workspace: workspace, follow: $follow, liveToken: liveToken)
                         }
@@ -95,8 +96,9 @@ struct WorkspaceView: View {
         .alert("Mux Manager", isPresented: Binding(get: { workspace.error != nil }, set: { if !$0 { workspace.error = nil } })) {
             Button("OK") { workspace.error = nil }
         } message: { Text(workspace.error ?? "") }
-        .onChange(of: workspace.selectedWindowID) { _, _ in follow = true; liveToken += 1; composerFocused = false }
-        .onChange(of: workspace.inputRevision) { _, _ in follow = true; liveToken += 1 }
+        .onChange(of: follow) { _, following in readingCapture = following ? nil : workspace.joinedCapture }
+        .onChange(of: workspace.selectedWindowID) { _, _ in readingCapture = nil; follow = true; liveToken += 1; composerFocused = false }
+        .onChange(of: workspace.inputRevision) { _, _ in readingCapture = nil; follow = true; liveToken += 1 }
         .onChange(of: workspace.directInput) { _, direct in if direct { composerFocused = false } }
         .onChange(of: workspace.closedWindowRevision) { _, _ in returnToWindows() }
         .onChange(of: workspace.state) { _, state in

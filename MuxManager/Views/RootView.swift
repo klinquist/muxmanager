@@ -113,6 +113,10 @@ struct RootView: View {
                     preferredColumn = .detail
                     if UIDevice.current.userInterfaceIdiom == .phone { visibility = .detailOnly }
                 }
+                if scene.hasPrefix("history") {
+                    try? await Task.sleep(nanoseconds: 2_000_000_000)
+                    HistoryScrollValidation.writeReport()
+                }
             }
             #endif
         }

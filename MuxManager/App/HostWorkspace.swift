@@ -75,6 +75,8 @@ final class HostWorkspace: ObservableObject, Identifiable {
     private var lastWindowFailure: String?
     private var reconnectSessionID: String?
     private var reconnectWindowID: String?
+    private var captureDiagnostics = "No terminal capture yet"
+    private var lastCaptureSignature: String?
 
     init(profile: ConnectionProfile, library: LibraryStore) {
         self.id = profile.id; self.profile = profile; self.library = library
@@ -98,7 +100,7 @@ final class HostWorkspace: ObservableObject, Identifiable {
         selectedWindowID = ["hosts", "connection"].contains(scene) ? nil : "@1"
         remoteColumns = scene == "fit" ? 44 : 120
         remoteRows = 36
-        displayMode = scene == "original" ? .original : (scene == "fit" ? .fit : .smart)
+        displayMode = ["original", "history-original"].contains(scene) ? .original : (scene == "fit" ? .fit : .smart)
         fontSize = UIDevice.current.userInterfaceIdiom == .pad ? 22 : 16
         if scene == "original" { fontSize = UIDevice.current.userInterfaceIdiom == .pad ? 18 : 13 }
         joinedCapture = """
@@ -146,6 +148,9 @@ final class HostWorkspace: ObservableObject, Identifiable {
 
             dev@build %
             """
+        }
+        if scene.hasPrefix("history") {
+            joinedCapture = (1...2036).map { String(format: "\u{1b}[32mROW %04d\u{1b}[0m — retained terminal history for scrolling validation", $0) }.joined(separator: "\n")
         }
         let screen = scene == "original" ? """
         \u{1b}[1;38;5;79mPROJECT TASKS\u{1b}[0m  /workspace/api
@@ -218,6 +223,7 @@ final class HostWorkspace: ObservableObject, Identifiable {
         State: \(statusText)
         Sessions: \(sessions.count); selected session: \(selectedSessionID ?? "none")
         Windows in selected session: \(windows.count); selected window: \(selectedWindowID ?? "none")
+        Capture: \(captureDiagnostics)
         Includes host/user identifiers, paths, and tmux session/window names.
         No passwords, private keys, terminal contents, or submitted input are recorded.
 
@@ -232,6 +238,7 @@ final class HostWorkspace: ObservableObject, Identifiable {
         do {
             try await discoverSessions(forceLog: true)
             try await discoverWindows(forceLog: true)
+            if selectedWindow != nil { try await refreshSnapshot(forceLog: true) }
         } catch { record("diagnostics", "Discovery refresh failed: \(error.localizedDescription)") }
     }
     private func record(_ category: String, _ message: String) { diagnostics.append(message, category: category) }
@@ -298,6 +305,7 @@ final class HostWorkspace: ObservableObject, Identifiable {
         }
         await transport.disconnect(); control = nil
         windows = []; sessions = []; selectedWindowID = nil; selectedSessionID = nil
+        captureDiagnostics = "No terminal capture yet"; lastCaptureSignature = nil
         joinedCapture = ""; terminalCapture = ""; terminalLiveRow = 0; snapshotRevision += 1
         draft = ""; directInput = false; controlModifier = false
         displayMode = .smart; fittedViewport = nil; state = .disconnected
@@ -351,6 +359,7 @@ final class HostWorkspace: ObservableObject, Identifiable {
         guard windows.contains(where: { $0.id == id }) else { return }
         record("selection", "Window selected: \(id)")
         selectedWindowID = id; draft = drafts[id] ?? ""
+        captureDiagnostics = "No terminal capture yet"; lastCaptureSignature = nil
         joinedCapture = ""; terminalCapture = ""; snapshotRevision += 1
         displayMode = .smart; fittedViewport = nil; dirty = true
         try await refreshSnapshot()
@@ -678,12 +687,12 @@ final class HostWorkspace: ObservableObject, Identifiable {
         }
     }
 
-    private func refreshSnapshot() async throws {
+    private func refreshSnapshot(forceLog: Bool = false) async throws {
         let generation = connectionGeneration
         guard let pane = selectedWindow?.paneID, !refreshInProgress else { return }
         refreshInProgress = true; dirty = false
         defer { refreshInProgress = false }
-        let metadata = try await command("display-message -p -t \(TmuxCommand.quote(pane)) '#{pane_width} #{pane_height} #{cursor_x} #{cursor_y} #{keypad_cursor_flag} #{keypad_flag} #{cursor_flag}'")
+        let metadata = try await command("display-message -p -t \(TmuxCommand.quote(pane)) '#{pane_width} #{pane_height} #{cursor_x} #{cursor_y} #{keypad_cursor_flag} #{keypad_flag} #{cursor_flag} #{history_size} #{history_limit} #{alternate_on}'")
         let fields = metadata.joined().split(separator: " ")
         guard fields.count >= 4, let cols = Int(fields[0]), let rows = Int(fields[1]),
               let x = Int(fields[2]), let y = Int(fields[3]) else { return }
@@ -691,6 +700,14 @@ final class HostWorkspace: ObservableObject, Identifiable {
         while let last = joined.last, TerminalCaptureStyle.parse(last).text.trimmingCharacters(in: .whitespaces).isEmpty { joined.removeLast() }
         let grid = try await command(TmuxCommand.capture(pane: pane, joined: false, colors: true))
         guard generation == connectionGeneration, pane == selectedWindow?.paneID else { dirty = true; return }
+        let historySize = fields.count > 7 ? Int(fields[7]) : nil
+        let historyLimit = fields.count > 8 ? Int(fields[8]) : nil
+        let alternate = fields.count > 9 ? String(fields[9]) : "unknown"
+        captureDiagnostics = "pane=\(pane); remote history=\(historySize.map(String.init) ?? "unknown")/\(historyLimit.map(String.init) ?? "unknown"); alternate screen=\(alternate); grid rows=\(grid.count); joined lines=\(joined.count); remote grid=\(cols)×\(rows)"
+        let signature = "\(pane):\(cols):\(rows):\(historyLimit ?? -1):\(historySize == 0):\(alternate)"
+        if forceLog || signature != lastCaptureSignature {
+            record("capture", captureDiagnostics); lastCaptureSignature = signature
+        }
         var lastTextRow = max(0, grid.count - 1)
         while lastTextRow > 0 && TerminalCaptureStyle.parse(grid[lastTextRow]).text.trimmingCharacters(in: .whitespaces).isEmpty { lastTextRow -= 1 }
         terminalLiveRow = max(lastTextRow, max(0, grid.count - rows) + y)

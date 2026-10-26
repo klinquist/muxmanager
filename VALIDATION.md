@@ -11,6 +11,13 @@
 - All eight App Store uploader tests pass (27 assertions), including multipart byte ranges, credential isolation, exact placement matching, idempotent reruns, metadata preservation, and separate ordering for screenshots/previews that share a device group.
 - The isolated tmux smoke test was previously blocked by local Unix socket restrictions. Live SSH/bastion and two-device iCloud checks have not been performed here.
 
+## Scroll regression checked 2026-10-26
+
+- On clean iPhone 17 Pro Max and iPad Pro 13-inch (M5) iOS 27.0 simulators, the isolated `history` and `history-original` Debug fixtures render 2,036 numbered, colored rows through the production views. Both modes hold a position two pages back and reach the oldest row; iPhone screenshots confirm row 0001 is visible. These checks exercise native callbacks and offsets, not physical finger gestures. Their Debug-only native callback probe writes `tmp/mux-scroll-report.json` inside the fixture app container.
+- Before the fix, a zero-velocity begin-drag callback left Smart Live following enabled and a position two pages back snapped to the tail. After the fix, the callback pauses following and the view holds its reading position. Original observes actual vertical offset changes while the user scrolls, preserving live updates during horizontal panning.
+- Smart/Conversation retain the displayed capture while reading so refreshed snapshots cannot move the content underneath the reader. Live or input resumes the latest output.
+- Connection diagnostics now report the remote history count/limit, alternate-screen state, and captured row counts. Real-host history still depends on tmux retention and TUI behavior; the app's 2,000-row capture limit is unchanged by this scrolling fix.
+
 ## Remaining device checks
 
 Run on an iPhone and iPad, including landscape, a hardware keyboard, software keyboard, and iPad split view.
