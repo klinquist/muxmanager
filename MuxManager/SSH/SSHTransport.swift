@@ -92,7 +92,9 @@ final class SSHTransport {
     private(set) var tmuxPath = "tmux"
 
     func connect(profile: ConnectionProfile, library: LibraryStore,
+                 onProgress: (String) -> Void,
                  onChallenge: @escaping @Sendable (HostKeyChallenge) -> Void) async throws {
+        onProgress("Preparing SSH credentials…")
         try profile.validate(in: library.profiles)
         diagnostic?("Target \(profile.name): \(profile.username)@\(profile.hostname):\(profile.port); authentication=\(profile.authentication.rawValue)")
         let settings = try settings(profile, library: library, onChallenge: onChallenge)
@@ -102,21 +104,26 @@ final class SSHTransport {
                     throw MuxError.message("The saved bastion is missing.")
                 }
                 diagnostic?("Connecting bastion \(bastion.name): \(bastion.username)@\(bastion.hostname):\(bastion.port); authentication=\(bastion.authentication.rawValue)")
+                onProgress("Connecting to jump host \(bastion.name)…")
                 let gateway = try await SSHClient.connect(to: try self.settings(bastion, library: library, onChallenge: onChallenge))
                 jump = gateway
                 diagnostic?("Bastion authenticated; opening SSH forwarding to \(profile.hostname):\(profile.port)")
+                onProgress("Jump host \(bastion.name) connected. Connecting to \(profile.name)…")
                 client = try await gateway.jump(to: settings)
             } else {
                 diagnostic?("Connecting directly")
+                onProgress("Connecting to \(profile.name)…")
                 client = try await SSHClient.connect(to: settings)
             }
             diagnostic?("Target SSH authenticated")
+            onProgress("SSH connected. Finding tmux on \(profile.name)…")
             let found = try await execute("if command -v tmux >/dev/null 2>&1; then command -v tmux; elif [ -x /opt/homebrew/bin/tmux ]; then echo /opt/homebrew/bin/tmux; elif [ -x /usr/local/bin/tmux ]; then echo /usr/local/bin/tmux; elif [ -x /usr/local/homebrew/bin/tmux ]; then echo /usr/local/homebrew/bin/tmux; else exit 127; fi")
             guard let path = found.split(separator: "\n").last, !path.isEmpty else {
                 throw MuxError.message("Install tmux 3.2 or later on this host.")
             }
             tmuxPath = String(path)
             diagnostic?("Resolved tmux executable: \(tmuxPath)")
+            onProgress("Checking tmux version…")
             let version = try await tmux("-V")
             diagnostic?("tmux client version: \(version.trimmingCharacters(in: .whitespacesAndNewlines))")
             diagnostic?("tmux clients force UTF-8 output (-u), independent of SSH locale")

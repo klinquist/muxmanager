@@ -11,9 +11,10 @@ final class HostWorkspace: ObservableObject, Identifiable {
     let id: UUID
     @Published var profile: ConnectionProfile
     @Published private(set) var state: State = .disconnected {
-        didSet { if oldValue != state { record("state", statusText) } }
+        didSet { if oldValue != state { record("state", stateText) } }
     }
     @Published private(set) var diagnostics = DiagnosticBuffer()
+    @Published private(set) var connectionProgress: String?
     @Published private(set) var sessions: [RemoteSession] = []
     @Published private(set) var windows: [RemoteWindow] = []
     @Published private(set) var selectedSessionID: String?
@@ -95,6 +96,12 @@ final class HostWorkspace: ObservableObject, Identifiable {
     #if DEBUG
     /// Deterministic sample data rendered by the production views, without SSH.
     func configureScreenshot(scene: String) {
+        if scene.hasPrefix("connecting") {
+            state = .connecting
+            connectionProgress = "Jump host Gateway connected. Connecting to Build server…"
+            sessions = []; windows = []; selectedSessionID = nil; selectedWindowID = nil
+            return
+        }
         state = .connected
         sessions = [RemoteSession(id: "$1", name: "work"), RemoteSession(id: "$2", name: "personal")]
         selectedSessionID = "$1"
@@ -202,6 +209,7 @@ final class HostWorkspace: ObservableObject, Identifiable {
 
     var selectedWindow: RemoteWindow? { windows.first { $0.id == selectedWindowID } }
     var isConnected: Bool { state == .connected }
+    var isEstablishingConnection: Bool { connectionProgress != nil && (state == .connecting || isConnected) }
     var shouldRetainInBackground: Bool { isConnected || state == .connecting || resumingFromBackground }
     var canConnect: Bool {
         switch state {
@@ -210,6 +218,10 @@ final class HostWorkspace: ObservableObject, Identifiable {
         }
     }
     var statusText: String {
+        if isEstablishingConnection, let connectionProgress { return connectionProgress }
+        return stateText
+    }
+    private var stateText: String {
         switch state {
         case .disconnected: return "Disconnected"
         case .connecting: return "Connecting…"
@@ -251,6 +263,10 @@ final class HostWorkspace: ObservableObject, Identifiable {
         } catch { record("diagnostics", "Discovery refresh failed: \(error.localizedDescription)") }
     }
     private func record(_ category: String, _ message: String) { diagnostics.append(message, category: category) }
+    private func reportConnectionProgress(_ message: String) {
+        connectionProgress = message
+        record("progress", message)
+    }
     private func recordDiscovery(_ label: String, command: String, lines: [String], parsed: Int) {
         record("tmux", "\(label) via \(control == nil ? "SSH exec (-u)" : "control mode (-u)"): \(command)")
         record("tmux", "\(label): received \(lines.count) lines; parsed \(parsed) records")
@@ -268,10 +284,17 @@ final class HostWorkspace: ObservableObject, Identifiable {
         record("connection", "New attempt for \(profile.name)")
         let generation = UUID(); connectionGeneration = generation
         connectionSetupGeneration = generation
-        defer { if connectionSetupGeneration == generation { connectionSetupGeneration = nil } }
+        reportConnectionProgress("Preparing connection to \(profile.name)…")
+        defer {
+            if connectionSetupGeneration == generation { connectionSetupGeneration = nil }
+            if connectionGeneration == generation { connectionProgress = nil }
+        }
         do {
             await transport.disconnect(); control = nil
-            try await transport.connect(profile: profile, library: library) { [weak self] challenge in
+            try await transport.connect(profile: profile, library: library, onProgress: { [weak self] message in
+                guard self?.connectionGeneration == generation else { return }
+                self?.reportConnectionProgress(message)
+            }) { [weak self] challenge in
                 Task { @MainActor in
                     guard self?.connectionGeneration == generation else { return }
                     self?.record("ssh", "Host verification required for \(challenge.endpoint); changed key=\(challenge.previousFingerprint != nil)")
@@ -279,9 +302,11 @@ final class HostWorkspace: ObservableObject, Identifiable {
                 }
             }
             guard generation == connectionGeneration else { await transport.disconnect(); return }
+            reportConnectionProgress("Inspecting tmux server…")
             await transport.collectEnvironmentDiagnostics()
             guard generation == connectionGeneration else { return }
             state = .connected
+            reportConnectionProgress("Loading tmux sessions…")
             try await discoverSessions()
             if let session = sessions.first(where: { $0.id == (selectedSessionID ?? reconnectSessionID) }) ?? (sessions.count == 1 ? sessions.first : nil) {
                 try await attach(session.id)
@@ -290,7 +315,7 @@ final class HostWorkspace: ObservableObject, Identifiable {
             } else {
                 record("selection", "No sessions found on the default tmux server for this SSH user/environment")
             }
-            connectionSetupGeneration = nil
+            connectionProgress = nil; connectionSetupGeneration = nil
             if isBackgrounded { await prepareForBackground(expectedIntent: connectionIntent) }
             if !isBackgrounded && !resumingFromBackground { startPolling() }
         } catch {
@@ -314,6 +339,7 @@ final class HostWorkspace: ObservableObject, Identifiable {
         record("connection", "Disconnect requested")
         reconnectSessionID = selectedSessionID; reconnectWindowID = selectedWindowID
         state = .disconnecting
+        connectionProgress = nil
         connectionGeneration = UUID(); attachmentGeneration = UUID(); pollTask?.cancel(); pollTask = nil
         draftSaveTask?.cancel(); persistDrafts()
         do { try await restoreSize() } catch {
@@ -441,6 +467,9 @@ final class HostWorkspace: ObservableObject, Identifiable {
 
     private func attach(_ id: String) async throws {
         guard TmuxCommand.isID(id, prefix: "$") else { throw MuxError.message("Invalid session.") }
+        if connectionSetupGeneration != nil {
+            reportConnectionProgress("Opening tmux session \(sessions.first(where: { $0.id == id })?.name ?? id)…")
+        }
         let connection = connectionGeneration
         let previousWindowID = selectedSessionID == id ? selectedWindowID : (reconnectSessionID == id ? reconnectWindowID : nil)
         control = nil
@@ -465,8 +494,12 @@ final class HostWorkspace: ObservableObject, Identifiable {
         record("tmux", "Attached session \(id); server identity=\(serverIdentity)")
         try await restoreSize()
         guard connection == connectionGeneration, isConnected else { throw CancellationError() }
+        if connectionSetupGeneration != nil { reportConnectionProgress("Loading tmux windows…") }
         try await discoverWindows()
-        if let selected = windows.first(where: { $0.id == previousWindowID }) ?? windows.first { try await chooseWindow(selected.id) }
+        if let selected = windows.first(where: { $0.id == previousWindowID }) ?? windows.first {
+            if connectionSetupGeneration != nil { reportConnectionProgress("Loading window \(selected.name)…") }
+            try await chooseWindow(selected.id)
+        }
     }
 
     func selectWindow(_ id: String) async {

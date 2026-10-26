@@ -52,15 +52,17 @@ struct WorkspaceView: View {
                     Text(workspace.displayMode == .fit ? "Remote size changed" : "Remote size preserved")
                     Text("\(workspace.remoteColumns)×\(workspace.remoteRows)").monospacedDigit()
                 }.font(.system(size: 10)).foregroundStyle(.secondary).padding(.horizontal, 12).padding(.vertical, 6)
-                if !workspace.isConnected { connectionBanner }
+                if !workspace.isConnected || workspace.isEstablishingConnection { connectionBanner }
                 inputBar(window: window)
             } else {
                 ContentUnavailableView {
-                    Label(workspace.isConnected ? "Choose a window" : workspace.profile.name, systemImage: "terminal")
+                    Label(workspace.isEstablishingConnection ? "Connecting" : (workspace.isConnected ? "Choose a window" : workspace.profile.name), systemImage: "terminal")
                 } description: {
-                    Text(workspace.isConnected ? (workspace.sessions.isEmpty ? "No tmux sessions are running. Create a session to begin." : "Choose a session and window from the sidebar.") : workspace.statusText)
+                    Text(emptyDescription)
                 } actions: {
-                    if workspace.isConnected {
+                    if workspace.isEstablishingConnection {
+                        ProgressView()
+                    } else if workspace.isConnected {
                         Button("New session") { action = .newSession }.buttonStyle(.borderedProminent)
                     } else {
                         Button(workspace.state == .connecting ? "Connecting…" : "Connect") { Task { await workspace.connect() } }
@@ -108,6 +110,13 @@ struct WorkspaceView: View {
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in keyboardVisible = false }
     }
 
+    private var emptyDescription: String {
+        if workspace.isEstablishingConnection || !workspace.isConnected { return workspace.statusText }
+        return workspace.sessions.isEmpty
+            ? "No tmux sessions are running. Create a session to begin."
+            : "Choose a session and window from the sidebar."
+    }
+
     private var displayControls: some View {
         VStack(spacing: 8) {
             Picker("Display mode", selection: Binding(get: { workspace.displayMode }, set: { mode in Task { await workspace.setDisplayMode(mode) } })) {
@@ -135,9 +144,13 @@ struct WorkspaceView: View {
 
     private var connectionBanner: some View {
         HStack {
-            Text(workspace.statusText).font(.caption).lineLimit(2)
+            Text(workspace.statusText).font(.caption).fixedSize(horizontal: false, vertical: true)
             Spacer()
-            Button("Reconnect") { Task { await workspace.connect() } }.font(.caption.bold()).disabled(!workspace.canConnect)
+            if workspace.isEstablishingConnection {
+                ProgressView().controlSize(.small)
+            } else {
+                Button("Reconnect") { Task { await workspace.connect() } }.font(.caption.bold()).disabled(!workspace.canConnect)
+            }
         }.padding(10).background(.orange.opacity(0.15))
     }
 

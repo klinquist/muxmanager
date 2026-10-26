@@ -26,6 +26,12 @@
 - The isolated tmux smoke test now checks that parking and resuming pane output preserves `ignore-size` and does not silence the desktop client. This test could not complete in this environment: the isolated server socket was unavailable immediately after creation, so these new protocol assertions remain unverified here.
 - Actual iOS background-runtime grants and SSH survival require the device checks below; simulator builds and deadline tests cannot establish those behaviors.
 
+## Connection progress checked 2026-10-26
+
+- A full arm64 Debug iOS simulator app build passes. Connection milestones come from the SSH connect/bootstrap operations and initial tmux discovery, with attempt-generation checks to ignore stale progress after Disconnect or another attempt.
+- The isolated `connecting-hosts` and `connecting` Debug fixtures were visually checked on clean iPhone 17 Pro Max and iPad Pro 13-inch (M5) iOS 27.0 simulators. The jump-host/target message wraps beneath the host and in the workspace, with a spinner; the fixtures do not access SSH, the real library, Keychain, or CloudKit. Captures are under the ignored `output/validation/2026-10-26/connection-progress/` directory.
+- Live direct/bastion connection checks should confirm the current step advances through SSH, tmux version/server inspection, session attachment, and window loading, then clears on success, failure, or Disconnect. Actual network timing and authentication were not exercised by the visual fixtures.
+
 ## Remaining device checks
 
 Run on an iPhone and iPad, including landscape, a hardware keyboard, software keyboard, and iPad split view.

@@ -17,6 +17,7 @@ struct RootView: View {
             List {
                 Section {
                     ForEach(library.visibleProfiles) { profile in
+                      VStack(alignment: .leading, spacing: 6) {
                         HStack(spacing: 12) {
                             Button { model.open(profile) } label: {
                               HStack(spacing: 12) {
@@ -35,6 +36,10 @@ struct RootView: View {
                                     .font(.caption.weight(.medium)).buttonStyle(.borderless)
                             }
                         }
+                        if let workspace = model.workspaces[profile.id] {
+                            HostConnectionProgress(workspace: workspace)
+                        }
+                      }
                         .contextMenu {
                             Button("Edit connection", systemImage: "pencil") { editingProfile = profile }
                             Button("Disconnect", systemImage: "network.slash") { Task { await model.workspaces[profile.id]?.disconnect() } }
@@ -109,7 +114,7 @@ struct RootView: View {
             #if DEBUG
             if let scene = LibraryStore.screenshotScene {
                 if scene == "connection" { editingProfile = library.visibleProfiles.first }
-                else if scene != "hosts" {
+                else if scene != "hosts" && scene != "connecting-hosts" {
                     preferredColumn = .detail
                     if UIDevice.current.userInterfaceIdiom == .phone { visibility = .detailOnly }
                 }
@@ -255,6 +260,20 @@ struct WindowSidebar: View {
             Button("New session", systemImage: "plus.rectangle.on.folder") { manage(.newSession) }
         } header: { Text(workspace.profile.name) }
       }
+    }
+}
+
+private struct HostConnectionProgress: View {
+    @ObservedObject var workspace: HostWorkspace
+    var body: some View {
+        if workspace.isEstablishingConnection {
+            HStack(alignment: .top, spacing: 8) {
+                ProgressView().controlSize(.small).accessibilityHidden(true)
+                Text(workspace.statusText)
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }.padding(.bottom, 4)
+        }
     }
 }
 
