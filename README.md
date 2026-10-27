@@ -74,6 +74,8 @@ Smart and Original attach with tmux's `ignore-size` client flag and never send r
 
 The composer uses a uniquely named tmux buffer and `paste-buffer -p -r -d`, so tmux adds bracketed-paste markers when the target application supports them. It then sends Enter once. A program without bracketed-paste support receives literal multiline text using its normal input behavior. Direct keys use `send-keys -H`; shell characters and newlines cannot become tmux commands. Failed or interrupted sends are never automatically replayed. Check the terminal before resending an unconfirmed command. A lost connection can leave a named paste buffer behind on the host.
 
+With a hardware keyboard, **Return sends the composer** and **Shift+Return inserts a new line at the cursor**. The software keyboard's Return and pasted line breaks stay in the draft. Return used to confirm text conversion is left to the input method. Sending uses the same checks as the send icon and keeps the composer focused.
+
 ## Current limits
 
 - Native autocomplete reads the screen rather than a shell editing-buffer API. Custom prompts/key bindings, vi editing modes, completion menus, wide Unicode, another client typing, or slow completion can prevent a reliable round trip. The app keeps the draft and asks you to inspect the remote line using Direct Keys if it cannot confirm the result or cleanup. It never sends Enter during completion. No shell integration is installed or required.

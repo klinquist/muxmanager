@@ -32,6 +32,12 @@
 - The isolated `connecting-hosts` and `connecting` Debug fixtures were visually checked on clean iPhone 17 Pro Max and iPad Pro 13-inch (M5) iOS 27.0 simulators. The jump-host/target message wraps beneath the host and in the workspace, with a spinner; the fixtures do not access SSH, the real library, Keychain, or CloudKit. Captures are under the ignored `output/validation/2026-10-26/connection-progress/` directory.
 - Live direct/bastion connection checks should confirm the current step advances through SSH, tmux version/server inspection, session attachment, and window loading, then clears on success, failure, or Disconnect. Actual network timing and authentication were not exercised by the visual fixtures.
 
+## Composer keyboard checked 2026-10-27
+
+- A full arm64 Debug iOS simulator app build passes. The native composer uses UIKit hardware key commands; the send icon and Return share the existing guarded send action. The field still grows to six lines and scrolls longer drafts.
+- A standalone iPad Pro 13-inch (M5), iOS 27.0 simulator probe used the production composer component with isolated bindings and a local submit counter, without SSH or saved user data. All 22 checks pass: Return routes through the first responder and submits once without a newline, Shift+Return inserts at the caret/replaces a selection, software Return and multiline paste do not submit, marked text suppresses submission, focus is retained, keyboard dismissal survives draft updates, and long drafts scroll within the six-line cap. Probe source and results are saved under ignored `output/validation/2026-10-27/composer-keyboard/`.
+- The probe dispatches the registered UIKit actions through the responder chain; it does not emulate physical key events. A device with a Magic Keyboard/Bluetooth keyboard should verify Return/Shift+Return and actual IME candidate confirmation, plus software keyboard input and Tab completion returning to the composer.
+
 ## Remaining device checks
 
 Run on an iPhone and iPad, including landscape, a hardware keyboard, software keyboard, and iPad split view.

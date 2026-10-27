@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 import MuxCore
 
 struct WorkspaceView: View {
@@ -10,7 +11,7 @@ struct WorkspaceView: View {
     @State private var readingCapture: String?
     @State private var liveToken = 0
     @State private var magnificationStart: Double?
-    @FocusState private var composerFocused: Bool
+    @State private var composerFocused = false
     @State private var keyboardVisible = false
 
     var body: some View {
@@ -185,15 +186,9 @@ struct WorkspaceView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 HStack(alignment: .bottom, spacing: 10) {
-                    TextField("Message or command…", text: $workspace.draft, axis: .vertical)
-                        .lineLimit(1...6).font(.system(.body, design: .monospaced))
-                        .textInputAutocapitalization(.never).autocorrectionDisabled()
-                        .focused($composerFocused)
+                    CommandComposer(text: $workspace.draft, focused: $composerFocused, onSubmit: submitComposer)
                         .padding(10).background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 12))
-                    Button {
-                        follow = true; liveToken += 1
-                        Task { await workspace.sendDraft() }
-                    } label: {
+                    Button(action: submitComposer) {
                         Image(systemName: workspace.sending ? "ellipsis" : "arrow.up").font(.headline)
                             .frame(width: 42, height: 42).background(.mint, in: Circle()).foregroundStyle(.black)
                     }
@@ -202,6 +197,11 @@ struct WorkspaceView: View {
                 }
             }
         }.padding(.horizontal, 12).padding(.vertical, 8).background(.bar)
+    }
+    private func submitComposer() {
+        guard !workspace.draft.isEmpty, !workspace.sending, workspace.isConnected, !workspace.busy else { return }
+        follow = true; liveToken += 1
+        Task { await workspace.sendDraft() }
     }
     private func key(_ title: String, _ value: String) -> some View {
         Button(title) { sendDirect(Data(value.utf8)) }.buttonStyle(.bordered)
@@ -213,6 +213,127 @@ struct WorkspaceView: View {
         let font = UIFont.monospacedSystemFont(ofSize: workspace.fontSize, weight: .regular)
         let width = ("W" as NSString).size(withAttributes: [.font: font]).width
         workspace.updateViewport(columns: Int(max(1, size.width - 2) / max(1, width)), rows: Int(size.height / max(1, ceil(font.lineHeight))))
+    }
+}
+
+/// UIKit key commands distinguish hardware Return from software Return and pasted newlines.
+private struct CommandComposer: UIViewRepresentable {
+    @Binding var text: String
+    var focused: Binding<Bool>
+    var onSubmit: () -> Void
+
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+    func makeUIView(context: Context) -> CommandTextView {
+        let view = CommandTextView()
+        view.delegate = context.coordinator
+        view.backgroundColor = .clear
+        view.textColor = .label
+        view.tintColor = .systemMint
+        view.textContainerInset = .zero
+        view.textContainer.lineFragmentPadding = 0
+        view.autocapitalizationType = .none
+        view.autocorrectionType = .no
+        view.smartQuotesType = .no
+        view.smartDashesType = .no
+        view.smartInsertDeleteType = .no
+        view.returnKeyType = .default
+        view.accessibilityLabel = "Message or command"
+        view.accessibilityHint = "On a hardware keyboard, Return sends and Shift-Return inserts a new line."
+        view.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        return view
+    }
+    func updateUIView(_ view: CommandTextView, context: Context) {
+        context.coordinator.parent = self
+        view.onSubmit = onSubmit
+        view.font = .monospacedSystemFont(ofSize: UIFont.preferredFont(forTextStyle: .body).pointSize, weight: .regular)
+        if view.text != text, view.markedTextRange == nil {
+            let selection = view.selectedRange
+            let atEnd = NSMaxRange(selection) == (view.text as NSString).length
+            view.text = text
+            let length = (text as NSString).length
+            let location = atEnd ? length : min(selection.location, length)
+            view.selectedRange = NSRange(location: location, length: atEnd ? 0 : min(selection.length, length - location))
+        }
+        view.updatePlaceholder()
+        view.wantsFocus = focused.wrappedValue
+        if !view.wantsFocus, view.isFirstResponder { view.resignFirstResponder() }
+        else if view.wantsFocus, !view.isFirstResponder {
+            DispatchQueue.main.async { [weak view] in
+                guard let view, view.wantsFocus, view.window != nil, !view.isFirstResponder else { return }
+                view.becomeFirstResponder()
+            }
+        }
+    }
+    func sizeThatFits(_ proposal: ProposedViewSize, uiView: CommandTextView, context: Context) -> CGSize? {
+        guard let width = proposal.width, width > 0, let font = uiView.font else { return nil }
+        let content = uiView.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude))
+        return CGSize(width: width, height: min(ceil(font.lineHeight * 6), max(ceil(font.lineHeight), content.height)))
+    }
+    static func dismantleUIView(_ view: CommandTextView, coordinator: Coordinator) {
+        view.wantsFocus = false; view.onSubmit = nil; view.delegate = nil
+        view.resignFirstResponder()
+    }
+    final class Coordinator: NSObject, UITextViewDelegate {
+        var parent: CommandComposer
+        init(_ parent: CommandComposer) { self.parent = parent }
+        func textViewDidChange(_ textView: UITextView) {
+            parent.text = textView.text
+            (textView as? CommandTextView)?.updatePlaceholder()
+            textView.invalidateIntrinsicContentSize()
+        }
+        func textViewDidBeginEditing(_ textView: UITextView) {
+            if !parent.focused.wrappedValue { parent.focused.wrappedValue = true }
+        }
+        func textViewDidEndEditing(_ textView: UITextView) {
+            if parent.focused.wrappedValue { parent.focused.wrappedValue = false }
+        }
+    }
+}
+
+private final class CommandTextView: UITextView {
+    var onSubmit: (() -> Void)?
+    var wantsFocus = false
+    private let placeholder = UILabel()
+
+    override init(frame: CGRect, textContainer: NSTextContainer?) {
+        super.init(frame: frame, textContainer: textContainer)
+        placeholder.text = "Message or command…"
+        placeholder.textColor = .placeholderText
+        placeholder.isUserInteractionEnabled = false
+        placeholder.isAccessibilityElement = false
+        addSubview(placeholder)
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+    func updatePlaceholder() {
+        placeholder.isHidden = !text.isEmpty
+        placeholder.font = font
+        setNeedsLayout()
+    }
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        placeholder.frame = CGRect(x: textContainerInset.left + textContainer.lineFragmentPadding,
+                                   y: textContainerInset.top, width: bounds.width, height: ceil(font?.lineHeight ?? 22))
+    }
+    override var keyCommands: [UIKeyCommand]? {
+        // Let the input method consume Return while confirming marked text.
+        guard markedTextRange == nil else { return super.keyCommands }
+        let submit = UIKeyCommand(input: "\r", modifierFlags: [], action: #selector(submitCommand))
+        let newline = UIKeyCommand(input: "\r", modifierFlags: .shift, action: #selector(insertLineBreak))
+        submit.wantsPriorityOverSystemBehavior = true
+        newline.wantsPriorityOverSystemBehavior = true
+        return [submit, newline] + (super.keyCommands ?? [])
+    }
+    override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {
+        if action == #selector(submitCommand) || action == #selector(insertLineBreak) { return markedTextRange == nil }
+        return super.canPerformAction(action, withSender: sender)
+    }
+    @objc private func submitCommand() {
+        guard markedTextRange == nil else { return }
+        onSubmit?()
+    }
+    @objc private func insertLineBreak() {
+        guard markedTextRange == nil else { return }
+        insertText("\n")
     }
 }
 
