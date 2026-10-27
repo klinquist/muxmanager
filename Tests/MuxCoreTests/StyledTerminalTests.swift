@@ -37,6 +37,15 @@ final class StyledTerminalTests: XCTestCase {
         XCTAssertEqual(blocks[0].styledText.runs.first?.style.foreground, .indexed(6))
         XCTAssertEqual(blocks[1].styledText.runs.first?.style.foreground, .indexed(3))
     }
+    func testAssistantResponseStaysTogetherAcrossBulletsCodeAndParagraphs() {
+        let input = "› explain\n\u{1b}[32m• First paragraph\n\n```swift\nlet x = 1\n```\n• Second paragraph\u{1b}[0m\ncontinued\nWould you like to run?\n1. Yes\n› next prompt"
+        let blocks = CodexPresentation.blocks(from: input)
+        XCTAssertEqual(blocks.map(\.role), [.user, .assistant, .terminal, .user])
+        XCTAssertEqual(blocks[1].text, "First paragraph\n\n```swift\nlet x = 1\n```\nSecond paragraph\ncontinued")
+        XCTAssertEqual(blocks[1].styledText.runs.first?.style.foreground, .indexed(2))
+        XCTAssertTrue(blocks[2].text.contains("1. Yes"))
+        XCTAssertEqual(blocks[3].text, "next prompt")
+    }
     func testOtherControlSequencesCannotLeakIntoDisplayedText() {
         let text = "\u{1b}]52;c;clipboard-data\u{7}safe \u{1b}]8;;https://example.com\u{1b}\\link\u{1b}]8;;\u{1b}\\\u{1b}[2J!"
         XCTAssertEqual(TerminalCaptureStyle.parse(text).text, "safe link!")

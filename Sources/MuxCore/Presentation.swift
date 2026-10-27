@@ -85,7 +85,9 @@ public enum CodexPresentation {
                 newRole = .terminal; content = line
             } else { newRole = nil; content = line }
             if let newRole {
-                if newRole != role || newRole != .terminal { flush() }
+                // Adjacent assistant bullets belong to one selectable response.
+                // User prompts and interactive terminal content retain boundaries.
+                if newRole != role || newRole == .user { flush() }
                 role = newRole
             }
             buffer.append(content)

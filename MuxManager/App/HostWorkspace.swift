@@ -115,7 +115,8 @@ final class HostWorkspace: ObservableObject, Identifiable {
         selectedWindowID = ["hosts", "connection"].contains(scene) ? nil : "@1"
         remoteColumns = scene == "fit" ? 44 : 120
         remoteRows = 36
-        displayMode = ["original", "history-original"].contains(scene) ? .original : (scene == "fit" ? .fit : .smart)
+        displayMode = ["original", "history-original", "copy-original"].contains(scene) ? .original : (scene == "fit" ? .fit : .smart)
+        if scene == "copy-conversation" { conversation = true }
         fontSize = UIDevice.current.userInterfaceIdiom == .pad ? 22 : 16
         if scene == "original" { fontSize = UIDevice.current.userInterfaceIdiom == .pad ? 18 : 13 }
         joinedCapture = """
@@ -152,8 +153,8 @@ final class HostWorkspace: ObservableObject, Identifiable {
         \u{1b}[1mReady for your review.\u{1b}[0m
         You can inspect the changes before committing.
         """
-        if scene == "shell" {
-            selectedWindowID = "@2"
+        if scene == "shell" || scene == "copy-updated" {
+            if scene == "shell" { selectedWindowID = "@2" }
             joinedCapture = """
             dev@build % ls
             \u{1b}[34mApplications\u{1b}[0m         Config                  Documentation           Package.swift
@@ -425,6 +426,9 @@ final class HostWorkspace: ObservableObject, Identifiable {
         let intent = connectionIntent
         await backgroundPreparation?.task.value
         guard !isBackgrounded, connectionIntent == intent else { return }
+        // no-output suppresses pane notifications while parked; don't rely on a
+        // new output event to make the selected pane eligible for capture again.
+        dirty = true
         // An in-progress connection starts polling itself after discovery.
         if connectionSetupGeneration != nil && !forceReconnect { return }
         if isConnected && !forceReconnect {
@@ -438,7 +442,7 @@ final class HostWorkspace: ObservableObject, Identifiable {
                 try await discoverSessions(forceLog: true)
                 guard !isBackgrounded, connectionIntent == intent, connectionGeneration == generation else { return }
                 try await discoverWindows(forceLog: true)
-                try await refreshSnapshot()
+                try await refreshSnapshot(forceLog: true)
                 guard !isBackgrounded, connectionIntent == intent, connectionGeneration == generation else { return }
                 record("lifecycle", "Foreground check succeeded; reusing the existing SSH connection")
                 startPolling()

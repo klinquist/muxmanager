@@ -38,7 +38,8 @@ struct TerminalCanvas: UIViewRepresentable {
         if shouldFollow { view.followLive = true; view.showLive() }
         context.coordinator.lastLiveToken = liveToken
         if workspace.directInput && !view.terminal.isFirstResponder { _ = view.terminal.becomeFirstResponder() }
-        if !workspace.directInput && view.terminal.isFirstResponder { _ = view.terminal.resignFirstResponder() }
+        // In read-only mode the terminal may remain first responder for Copy;
+        // its empty input view keeps the software keyboard hidden.
     }
 
     final class Coordinator: NSObject, TerminalViewDelegate {
@@ -70,7 +71,21 @@ struct TerminalCanvas: UIViewRepresentable {
 final class PinnedTerminalView: TerminalView {
     var pinnedColumns = 80
     var pinnedRows = 24
-    var keyboardEnabled = false
+    var keyboardEnabled = false {
+        didSet {
+            if !inputConfigured {
+                standardInput = inputView; standardAccessory = inputAccessoryView; inputConfigured = true
+            } else if oldValue == keyboardEnabled { return }
+            inputView = keyboardEnabled ? standardInput : readOnlyInput
+            inputAccessoryView = keyboardEnabled ? standardAccessory : nil
+            if isFirstResponder { reloadInputViews() }
+        }
+    }
+    private var inputConfigured = false
+    private var standardInput: UIView?
+    private var standardAccessory: UIView?
+    private let readOnlyInput = UIView(frame: .zero)
+    var onSelection: (() -> Void)?
     var afterLayout: (() -> Void)?
     var manualOffsetChanged: ((CGPoint) -> Void)?
     override var contentOffset: CGPoint {
@@ -78,7 +93,15 @@ final class PinnedTerminalView: TerminalView {
             if isTracking || isDragging || isDecelerating { manualOffsetChanged?(contentOffset) }
         }
     }
-    override var canBecomeFirstResponder: Bool { keyboardEnabled && super.canBecomeFirstResponder }
+    override func becomeFirstResponder() -> Bool {
+        let result = super.becomeFirstResponder()
+        if result, !keyboardEnabled { onSelection?() }
+        return result
+    }
+    override func selectionChanged(source: Terminal) {
+        super.selectionChanged(source: source)
+        if hasActiveSelection { onSelection?() }
+    }
     override func layoutSubviews() {
         super.layoutSubviews()
         let model = getTerminal()
@@ -106,7 +129,14 @@ final class TerminalContainer: UIView {
         horizontal.isDirectionalLockEnabled = true
         terminal.backgroundColor = backgroundColor
         terminal.changeScrollback(2200)
+        terminal.keyboardEnabled = false
         addSubview(horizontal); horizontal.addSubview(terminal)
+        horizontal.isSelectingText = { [weak terminal] in terminal?.hasActiveSelection == true }
+        terminal.onSelection = { [weak self] in
+            guard let self, !self.applyingSnapshot else { return }
+            self.followLive = false; self.readingOffset = self.terminal.contentOffset
+            self.onManualScroll?()
+        }
         terminal.afterLayout = { [weak self] in self?.pinLiveOffset() }
         terminal.manualOffsetChanged = { [weak self] offset in
             guard let self, !self.applyingSnapshot, !self.aligningLive else { return }
@@ -137,6 +167,8 @@ final class TerminalContainer: UIView {
     }
     func showLive() {
         guard !terminal.isTracking, !terminal.isDragging else { return }
+        terminal.clearSelection()
+        if !terminal.keyboardEnabled, terminal.isFirstResponder { _ = terminal.resignFirstResponder() }
         // Update the emulator's scroll state as well as UIKit's pixel offset.
         aligningLive = true
         terminal.scroll(toPosition: 1)
@@ -186,8 +218,10 @@ final class TerminalContainer: UIView {
 
 /// The outer viewport handles horizontal panning only; vertical history belongs to SwiftTerm.
 final class HorizontalTerminalScrollView: UIScrollView {
+    var isSelectingText: () -> Bool = { false }
     override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
         if gestureRecognizer === panGestureRecognizer {
+            if isSelectingText() { return false }
             let velocity = panGestureRecognizer.velocity(in: self)
             if abs(velocity.y) >= abs(velocity.x) { return false }
         }
@@ -200,8 +234,12 @@ struct StyledTerminalLabel: UIViewRepresentable {
     let text: StyledTerminalText
     let fontSize: Double
     var wraps = true
+    var selectionResetToken = 0
+    var onSelection: () -> Void = {}
+    func makeCoordinator() -> Coordinator { Coordinator() }
     func makeUIView(context: Context) -> UITextView {
         let view = UITextView()
+        view.delegate = context.coordinator
         view.isEditable = false; view.isSelectable = true; view.isScrollEnabled = false
         view.backgroundColor = .clear; view.textContainerInset = .zero
         view.textContainer.lineFragmentPadding = 0
@@ -209,9 +247,26 @@ struct StyledTerminalLabel: UIViewRepresentable {
         return view
     }
     func updateUIView(_ view: UITextView, context: Context) {
+        context.coordinator.onSelection = onSelection
+        context.coordinator.updating = true
+        defer { context.coordinator.updating = false }
+        if context.coordinator.selectionResetToken != selectionResetToken {
+            view.selectedRange = NSRange(location: 0, length: 0)
+            if view.isFirstResponder { view.resignFirstResponder() }
+            context.coordinator.selectionResetToken = selectionResetToken
+        }
         let value = attributedText()
         if !view.attributedText.isEqual(to: value) { view.attributedText = value }
         view.textContainer.lineBreakMode = wraps ? .byWordWrapping : .byClipping
+    }
+    final class Coordinator: NSObject, UITextViewDelegate {
+        var onSelection: () -> Void = {}
+        var updating = false
+        var selectionResetToken = -1
+        func textViewDidChangeSelection(_ textView: UITextView) {
+            guard !updating, textView.selectedRange.length > 0 else { return }
+            onSelection()
+        }
     }
     func sizeThatFits(_ proposal: ProposedViewSize, uiView: UITextView, context: Context) -> CGSize? {
         let natural = uiView.attributedText.boundingRect(with: CGSize(width: 1_000_000, height: 1_000_000), options: [.usesLineFragmentOrigin, .usesFontLeading], context: nil)
@@ -346,22 +401,27 @@ final class BottomContentController<Content: View>: UIViewController, UIScrollVi
 
 struct DirectKeyboard: UIViewRepresentable {
     var onInput: (Data) -> Void
+    var isActive: () -> Bool = { true }
     func makeUIView(context: Context) -> KeyInputView { KeyInputView() }
     func updateUIView(_ view: KeyInputView, context: Context) {
-        view.onInput = onInput
-        DispatchQueue.main.async { if view.window != nil && !view.isFirstResponder { view.becomeFirstResponder() } }
+        view.onInput = { bytes in if isActive() { onInput(bytes) } }
+        view.isActive = isActive
+        DispatchQueue.main.async {
+            if view.window != nil && !view.isFirstResponder && view.canBecomeFirstResponder { view.becomeFirstResponder() }
+        }
     }
     static func dismantleUIView(_ view: KeyInputView, coordinator: ()) { view.resignFirstResponder() }
 }
 
 final class KeyInputView: UIView, UIKeyInput {
     var onInput: ((Data) -> Void)?
+    var isActive: () -> Bool = { true }
     var hasText: Bool { true }
     var autocorrectionType: UITextAutocorrectionType = .no
     var autocapitalizationType: UITextAutocapitalizationType = .none
     var smartQuotesType: UITextSmartQuotesType = .no
     var smartDashesType: UITextSmartDashesType = .no
-    override var canBecomeFirstResponder: Bool { true }
+    override var canBecomeFirstResponder: Bool { isActive() }
     func insertText(_ text: String) { onInput?(Data((text == "\n" ? "\r" : text).utf8)) }
     func deleteBackward() { onInput?(Data([127])) }
     override var keyCommands: [UIKeyCommand]? {
@@ -424,6 +484,83 @@ enum HistoryScrollValidation {
         for window in UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }).flatMap(\.windows) { inspect(window) }
         if let data = try? JSONSerialization.data(withJSONObject: metrics, options: .prettyPrinted) {
             try? data.write(to: FileManager.default.temporaryDirectory.appendingPathComponent("mux-scroll-report.json"))
+        }
+    }
+}
+/// Runs only against isolated sample captures. Copy actions use the real UIKit
+/// responders; the foreground step is completed by backgrounding/reopening the app.
+@MainActor
+enum CopySelectionValidation {
+    static func run(workspace: HostWorkspace) async {
+        guard LibraryStore.screenshotScene?.hasPrefix("copy") == true else { return }
+        func views() -> [UIView] {
+            func flatten(_ view: UIView) -> [UIView] { [view] + view.subviews.flatMap(flatten) }
+            return UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.flatMap(\.windows).flatMap(flatten)
+        }
+        func pause() async { try? await Task.sleep(for: .milliseconds(250)) }
+        var checks: [String: Bool] = [:]
+        func write(_ stage: String) {
+            let result: [String: Any] = ["stage": stage, "checks": checks, "passed": checks.values.allSatisfy { $0 }]
+            if let data = try? JSONSerialization.data(withJSONObject: result, options: [.prettyPrinted, .sortedKeys]) {
+                try? data.write(to: FileManager.default.temporaryDirectory.appendingPathComponent("mux-copy-report.json"))
+            }
+        }
+        if let container = views().compactMap({ $0 as? TerminalContainer }).first {
+            let terminal = container.terminal
+            terminal.feed(text: "\u{1b}cfirst line\r\nsecond line\r\nthird line")
+            await pause()
+            _ = terminal.becomeFirstResponder()
+            terminal.setSelectionRange(start: Position(col: 0, row: 0), end: Position(col: 10, row: 2))
+            await pause()
+            checks["terminalSelectionPausesLive"] = !container.followLive
+            checks["terminalCopyResponderIsReadOnly"] = terminal.isFirstResponder && !terminal.keyboardEnabled && terminal.inputView != nil && terminal.inputAccessoryView == nil
+            checks["terminalSelectionVetoesOuterPan"] = container.horizontal.isSelectingText()
+            terminal.copy(nil)
+            let copied = UIPasteboard.general.string ?? ""
+            checks["terminalCopiesMultipleLines"] = copied.contains("first line\nsecond line\nthird line")
+            write("complete")
+            return
+        }
+        let textViews = views().compactMap { $0 as? UITextView }.filter { !$0.isEditable }
+        guard let label = textViews.max(by: { $0.text.count < $1.text.count }) else {
+            checks["selectableTextExists"] = false; write("complete"); return
+        }
+        let original = label.text ?? ""
+        checks["responseContainsMultipleLines"] = original.components(separatedBy: "\n").count > 3
+        if !workspace.conversation {
+            checks["smartUsesOneSelectionDocument"] = textViews.count == 1
+            checks["smartPreservesCaptureText"] = original == TerminalCaptureStyle.parse(workspace.joinedCapture).text
+        }
+        workspace.directInput = true
+        await pause()
+        let directKeyboard = views().compactMap { $0 as? KeyInputView }.first
+        _ = label.becomeFirstResponder()
+        label.selectedRange = NSRange(location: 0, length: (original as NSString).length)
+        await pause()
+        checks["selectionDisablesDirectKeys"] = !workspace.directInput
+        checks["selectionKeepsCopyResponder"] = label.isFirstResponder
+        let inputRevision = workspace.inputRevision
+        directKeyboard?.insertText("late input")
+        await pause()
+        checks["selectionRejectsLateDirectInput"] = workspace.inputRevision == inputRevision
+        checks["textSelectionPausesLive"] = views().compactMap { $0 as? FollowingScrollView }.contains { !$0.followsLive }
+        label.copy(nil)
+        checks["nativeCopyPreservesAllLines"] = UIPasteboard.general.string == original
+        checks["selectionPreservesColors"] = label.attributedText.length > 0 && label.attributedText.attribute(.foregroundColor, at: 0, effectiveRange: nil) != nil
+        if workspace.conversation { write("complete"); return }
+        workspace.configureScreenshot(scene: "copy-updated")
+        await pause()
+        checks["fixturePublishedNewOutput"] = original != TerminalCaptureStyle.parse(workspace.joinedCapture).text
+        checks["selectionHoldsDisplayedCapture"] = label.text == original
+        write("waiting-for-foreground")
+        for await _ in NotificationCenter.default.notifications(named: UIApplication.didBecomeActiveNotification) {
+            await pause()
+            let current = views().compactMap { $0 as? UITextView }.first { !$0.isEditable }
+            checks["foregroundDisplaysFreshCapture"] = current?.text == TerminalCaptureStyle.parse(workspace.joinedCapture).text
+            checks["foregroundResumesFollowing"] = views().compactMap { $0 as? FollowingScrollView }.contains { $0.followsLive }
+            checks["foregroundClearsSelection"] = current?.selectedRange.length == 0
+            write("complete")
+            return
         }
     }
 }

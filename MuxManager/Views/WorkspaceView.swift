@@ -3,12 +3,14 @@ import UIKit
 import MuxCore
 
 struct WorkspaceView: View {
+    @Environment(\.scenePhase) private var scenePhase
     @ObservedObject var workspace: HostWorkspace
     var returnToWindows: () -> Void
     @State private var action: ManagementAction?
     @State private var showDiagnostics = false
     @State private var follow = true
     @State private var readingCapture: String?
+    @State private var resumeToLive = false
     @State private var liveToken = 0
     @State private var magnificationStart: Double?
     @State private var composerFocused = false
@@ -19,11 +21,12 @@ struct WorkspaceView: View {
             if let window = workspace.selectedWindow {
                 displayControls
                 GeometryReader { geometry in
+                    let capture = readingCapture ?? workspace.joinedCapture
                     ZStack(alignment: .bottomTrailing) {
                         if workspace.conversation {
-                            ConversationContent(capture: readingCapture ?? workspace.joinedCapture, fontSize: workspace.fontSize, follow: $follow, liveToken: liveToken)
+                            ConversationContent(capture: capture, fontSize: workspace.fontSize, follow: $follow, liveToken: liveToken, onSelection: { pauseForSelection(capture) })
                         } else if workspace.displayMode == .smart {
-                            SmartContent(capture: readingCapture ?? workspace.joinedCapture, fontSize: workspace.fontSize, follow: $follow, liveToken: liveToken)
+                            SmartContent(capture: capture, fontSize: workspace.fontSize, follow: $follow, liveToken: liveToken, onSelection: { pauseForSelection(capture) })
                         } else {
                             TerminalCanvas(workspace: workspace, follow: $follow, liveToken: liveToken)
                         }
@@ -38,7 +41,8 @@ struct WorkspaceView: View {
                     .onChange(of: workspace.fontSize) { _, _ in updateViewport(geometry.size) }
                     .overlay(alignment: .topLeading) {
                         if workspace.directInput && (workspace.conversation || workspace.displayMode == .smart) {
-                            DirectKeyboard { bytes in sendDirect(bytes) }.frame(width: 1, height: 1).opacity(0.01)
+                            DirectKeyboard(onInput: { bytes in sendDirect(bytes) }, isActive: { workspace.directInput })
+                                .frame(width: 1, height: 1).opacity(0.01)
                         }
                     }
                 }
@@ -47,7 +51,7 @@ struct WorkspaceView: View {
                     Text(workspace.profile.name)
                     Spacer()
                     Button {
-                        follow = true; liveToken += 1
+                        showLive()
                     } label: { Label("Live", systemImage: "arrow.down.to.line").font(.caption.bold()) }
                         .buttonStyle(.borderless)
                     Text(workspace.displayMode == .fit ? "Remote size changed" : "Remote size preserved")
@@ -99,7 +103,16 @@ struct WorkspaceView: View {
         .alert("Mux Manager", isPresented: Binding(get: { workspace.error != nil }, set: { if !$0 { workspace.error = nil } })) {
             Button("OK") { workspace.error = nil }
         } message: { Text(workspace.error ?? "") }
-        .onChange(of: follow) { _, following in readingCapture = following ? nil : workspace.joinedCapture }
+        .onChange(of: follow) { _, following in
+            if following { readingCapture = nil }
+            else if readingCapture == nil { readingCapture = workspace.joinedCapture }
+        }
+        .onChange(of: scenePhase) { _, phase in
+            // Foreground SSH probes refresh the model, but a held reading
+            // capture/emulator can otherwise keep showing the pre-background text.
+            if phase == .background { resumeToLive = true }
+            else if phase == .active, resumeToLive { resumeToLive = false; showLive() }
+        }
         .onChange(of: workspace.selectedWindowID) { _, _ in readingCapture = nil; follow = true; liveToken += 1; composerFocused = false }
         .onChange(of: workspace.inputRevision) { _, _ in readingCapture = nil; follow = true; liveToken += 1 }
         .onChange(of: workspace.directInput) { _, direct in if direct { composerFocused = false } }
@@ -109,6 +122,14 @@ struct WorkspaceView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in keyboardVisible = true }
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in keyboardVisible = false }
+    }
+
+    private func showLive() {
+        readingCapture = nil; follow = true; liveToken += 1
+    }
+    private func pauseForSelection(_ capture: String) {
+        workspace.directInput = false; composerFocused = false
+        readingCapture = capture; follow = false
     }
 
     private var emptyDescription: String {
@@ -369,17 +390,15 @@ private struct SmartContent: View {
     let fontSize: Double
     @Binding var follow: Bool
     let liveToken: Int
+    var onSelection: () -> Void
     var body: some View {
         BottomFollowingContent(follow: $follow, liveToken: liveToken) {
-                VStack(alignment: .leading, spacing: 0) {
-                    ForEach(SmartPresentation.blocks(from: capture)) { block in
-                        // Smart always wraps locally, including shell columns,
-                        // long paths, tables, and code. Original preserves grids.
-                        StyledTerminalLabel(text: block.styledText, fontSize: fontSize)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.vertical, block.kind == .fixed ? 4 : 0)
-                    }
-                }.padding(.horizontal, 14).padding(.top, 14).fixedSize(horizontal: false, vertical: true)
+            // One native text document lets selection span prose, code, tables,
+            // and blank lines instead of stopping at a presentation-block boundary.
+            StyledTerminalLabel(text: TerminalCaptureStyle.parse(capture), fontSize: fontSize,
+                                selectionResetToken: liveToken, onSelection: onSelection)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 14).padding(.top, 14).fixedSize(horizontal: false, vertical: true)
         }
     }
 }
@@ -389,6 +408,7 @@ private struct ConversationContent: View {
     let fontSize: Double
     @Binding var follow: Bool
     let liveToken: Int
+    var onSelection: () -> Void
     var body: some View {
         BottomFollowingContent(follow: $follow, liveToken: liveToken) {
                 VStack(alignment: .leading, spacing: 16) {
@@ -398,7 +418,8 @@ private struct ConversationContent: View {
                         VStack(alignment: .leading, spacing: 8) {
                             Text(block.role == .user ? "YOU" : block.role == .assistant ? "CODEX" : "TERMINAL")
                                 .font(.system(size: 10, weight: .bold, design: .monospaced)).foregroundStyle(.mint)
-                            StyledTerminalLabel(text: block.styledText, fontSize: fontSize)
+                            StyledTerminalLabel(text: block.styledText, fontSize: fontSize,
+                                                selectionResetToken: liveToken, onSelection: onSelection)
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(14).background(block.role == .user ? Color.mint.opacity(0.10) : Color.white.opacity(0.035), in: RoundedRectangle(cornerRadius: 14))

@@ -64,11 +64,15 @@ Pinch to change text size, or use the text-size menu. **Live**, below the readin
 
 In Fit and Original, vertical drags scroll terminal history; the outer viewport handles horizontal panning without pausing live updates. Reading history holds the displayed capture steady while new output arrives. Tap **Live** or send terminal input (including the arrow buttons and direct keyboard input) to display the newest capture and resume following.
 
+Long-press output, drag the selection handles across lines, then tap **Copy**. Smart supports a continuous selection across paragraphs, code, and tables; Conversation keeps adjacent assistant paragraphs in one selectable response. Selecting text pauses Live updates so the selection stays steady. Original and Fit support copying with the software keyboard hidden. Tap **Live** to return to the newest output.
+
 Each host has a **Connect/Disconnect** button on its right. Disconnecting removes its session and window list and clears the displayed terminal, while preserving saved connections and drafts.
 
 While connecting, progress appears below the host and in its workspace: connecting to the jump host, connecting onward to the target, finding/checking tmux, and loading sessions and windows. The same milestones appear in Connection diagnostics. Messages clear when the attempt finishes or is disconnected.
 
 Backgrounding pauses polling and parks SSH for a best-effort **10-minute** window. It restores app-owned Fit sizing, switches Fit to Original, and silences pane output for this app's tmux control client. On return, it validates and reuses a healthy connection, or reconnects if the connection is unavailable or the retention window has elapsed. Explicit Disconnect stays disconnected, and submitted input is never replayed. iOS decides how much background runtime to grant; when that time expires, the app releases its runtime request and leaves sockets parked for possible reuse after suspension. Ten minutes of active execution or uninterrupted networking is not guaranteed.
+
+Returning from the background resumes **Live** in the selected window and displays the latest captured output automatically.
 
 Smart and Original attach with tmux's `ignore-size` client flag and never send remote resize commands. Rotation, the keyboard, and zoom only affect remote dimensions while Fit is selected. Fit records the prior dimensions and whether the sizing policy was inherited. It restores app-owned changes when leaving Fit, switching windows, disconnecting, or backgrounding while the connection remains usable. Another client's changed dimensions/policy or a restarted tmux server prevents stale restoration. A pending lease is saved locally for reconnect recovery. A sudden network loss cannot guarantee immediate restoration without a remote helper.
 

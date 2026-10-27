@@ -122,6 +122,10 @@ struct RootView: View {
                     try? await Task.sleep(nanoseconds: 2_000_000_000)
                     HistoryScrollValidation.writeReport()
                 }
+                if scene.hasPrefix("copy"), let workspace = model.activeWorkspace {
+                    try? await Task.sleep(for: .seconds(2))
+                    await CopySelectionValidation.run(workspace: workspace)
+                }
             }
             #endif
         }
