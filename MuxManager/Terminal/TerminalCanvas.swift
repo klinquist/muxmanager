@@ -406,9 +406,7 @@ struct DirectKeyboard: UIViewRepresentable {
     func updateUIView(_ view: KeyInputView, context: Context) {
         view.onInput = { bytes in if isActive() { onInput(bytes) } }
         view.isActive = isActive
-        DispatchQueue.main.async {
-            if view.window != nil && !view.isFirstResponder && view.canBecomeFirstResponder { view.becomeFirstResponder() }
-        }
+        view.requestFocus()
     }
     static func dismantleUIView(_ view: KeyInputView, coordinator: ()) { view.resignFirstResponder() }
 }
@@ -422,6 +420,18 @@ final class KeyInputView: UIView, UIKeyInput {
     var smartQuotesType: UITextSmartQuotesType = .no
     var smartDashesType: UITextSmartDashesType = .no
     override var canBecomeFirstResponder: Bool { isActive() }
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        // A newly mounted keyboard overlay can receive updateUIView before it
+        // has a window. Retry once it is attached, including after Hide keyboard.
+        if window != nil { requestFocus() }
+    }
+    func requestFocus() {
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.window != nil, self.canBecomeFirstResponder, !self.isFirstResponder else { return }
+            self.becomeFirstResponder()
+        }
+    }
     func insertText(_ text: String) { onInput?(Data((text == "\n" ? "\r" : text).utf8)) }
     func deleteBackward() { onInput?(Data([127])) }
     override var keyCommands: [UIKeyCommand]? {

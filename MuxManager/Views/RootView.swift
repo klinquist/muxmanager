@@ -126,6 +126,10 @@ struct RootView: View {
                     try? await Task.sleep(for: .seconds(2))
                     await CopySelectionValidation.run(workspace: workspace)
                 }
+                if scene.hasPrefix("input"), let workspace = model.activeWorkspace {
+                    try? await Task.sleep(for: .seconds(2))
+                    await InputModeValidation.run(workspace: workspace)
+                }
             }
             #endif
         }

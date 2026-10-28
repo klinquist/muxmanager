@@ -32,6 +32,11 @@ struct WorkspaceView: View {
                         }
                     }
                     .background(Color(red: 0.035, green: 0.055, blue: 0.07))
+                    .simultaneousGesture(TapGesture().onEnded {
+                        // Selection/scrolling pauses Live. Use the keyboard
+                        // button to leave that state without stealing Copy focus.
+                        if workspace.terminalMode, !workspace.directInput, follow { activateTerminalKeyboard() }
+                    })
                     .simultaneousGesture(MagnificationGesture().onChanged { scale in
                         if magnificationStart == nil { magnificationStart = workspace.fontSize }
                         workspace.fontSize = min(32, max(8, (magnificationStart ?? 14) * scale))
@@ -90,6 +95,7 @@ struct WorkspaceView: View {
                     Divider()
                     Button("Smaller text", systemImage: "textformat.size.smaller") { workspace.fontSize = max(8, workspace.fontSize - 1) }
                     Button("Larger text", systemImage: "textformat.size.larger") { workspace.fontSize = min(32, workspace.fontSize + 1) }
+                    Toggle("Conversation view", isOn: $workspace.conversation).disabled(workspace.terminalMode)
                     Divider()
                     Button("Disconnect", systemImage: "network.slash") { Task { await workspace.disconnect() } }
                 } label: { Image(systemName: "ellipsis.circle") }
@@ -131,6 +137,18 @@ struct WorkspaceView: View {
         workspace.directInput = false; composerFocused = false
         readingCapture = capture; follow = false
     }
+    private func activateTerminalKeyboard() {
+        guard workspace.terminalMode, workspace.isConnected else { return }
+        composerFocused = false
+        showLive()
+        workspace.directInput = true
+    }
+
+    private func setTerminalMode(_ enabled: Bool) {
+        composerFocused = false
+        workspace.setTerminalMode(enabled)
+        if enabled { showLive() }
+    }
 
     private var emptyDescription: String {
         if workspace.isEstablishingConnection || !workspace.isConnected { return workspace.statusText }
@@ -145,22 +163,11 @@ struct WorkspaceView: View {
                 ForEach(DisplayMode.allCases, id: \.self) { Text($0.rawValue).tag($0) }
             }.pickerStyle(.segmented).disabled(workspace.busy || !workspace.isConnected)
                 .accessibilityHint("Only Fit device changes the remote window size.")
-            HStack {
-                Button {
-                    workspace.conversation.toggle()
-                } label: {
-                    Label(workspace.conversation ? "Conversation" : "Terminal", systemImage: workspace.conversation ? "bubble.left.and.bubble.right" : "terminal")
-                        .font(.caption.weight(.medium))
-                }
-                Spacer()
-                if workspace.conversation { Text("Interpreted from terminal").font(.caption2).foregroundStyle(.secondary) }
-                Button {
-                    workspace.directInput.toggle()
-                } label: {
-                    Label(workspace.directInput ? "Direct keys" : "Composer", systemImage: workspace.directInput ? "keyboard" : "square.and.pencil")
-                        .font(.caption.weight(.medium))
-                }.disabled(!workspace.isConnected)
-            }
+            Picker("Input mode", selection: Binding(get: { workspace.terminalMode }, set: setTerminalMode)) {
+                Text("Compose").tag(false)
+                Text("Terminal").tag(true)
+            }.pickerStyle(.segmented).disabled(!workspace.isConnected)
+                .accessibilityHint("Terminal sends each key directly to the remote window. Compose drafts text before sending.")
         }.padding(.horizontal, 12).padding(.vertical, 10).background(.bar)
     }
 
@@ -188,7 +195,11 @@ struct WorkspaceView: View {
                     Button("Ctrl") { workspace.controlModifier.toggle() }.tint(workspace.controlModifier ? .orange : .mint)
                         .buttonStyle(.bordered).accessibilityAddTraits(workspace.controlModifier ? .isSelected : [])
                     key("Ctrl-C", "\u{3}")
-                    key("↑", "\u{1b}[A"); key("↓", "\u{1b}[B"); key("←", "\u{1b}[D"); key("→", "\u{1b}[C")
+                    Button("↑") { if workspace.terminalMode { sendDirect(Data("\u{1b}[A".utf8)) } else { workspace.recallCommand(older: true); composerFocused = true } }
+                        .buttonStyle(.bordered).accessibilityLabel(workspace.terminalMode ? "Up arrow" : "Previous command")
+                    Button("↓") { if workspace.terminalMode { sendDirect(Data("\u{1b}[B".utf8)) } else { workspace.recallCommand(older: false); composerFocused = true } }
+                        .buttonStyle(.bordered).accessibilityLabel(workspace.terminalMode ? "Down arrow" : "Next command")
+                    key("←", "\u{1b}[D"); key("→", "\u{1b}[C")
                     key("Enter", "\r")
                 }.font(.system(.caption, design: .monospaced)).disabled(!workspace.isConnected || workspace.sending)
               }
@@ -199,15 +210,20 @@ struct WorkspaceView: View {
                       UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
                   } label: { Image(systemName: "keyboard.chevron.compact.down") }
                       .buttonStyle(.bordered).accessibilityLabel("Hide keyboard")
+              } else if workspace.terminalMode {
+                  Button(action: activateTerminalKeyboard) { Image(systemName: "keyboard") }
+                      .buttonStyle(.bordered).accessibilityLabel("Show terminal keyboard")
               }
             }
-            if !workspace.directInput {
+            if !workspace.terminalMode {
                 if let hint = workspace.completionHint {
                     Text(hint).font(.caption).foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 HStack(alignment: .bottom, spacing: 10) {
-                    CommandComposer(text: $workspace.draft, focused: $composerFocused, onSubmit: submitComposer)
+                    CommandComposer(text: $workspace.draft, focused: $composerFocused, onSubmit: submitComposer,
+                                    onHistory: { workspace.recallCommand(older: $0) },
+                                    isBrowsingHistory: workspace.isBrowsingCommandHistory)
                         .padding(10).background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 12))
                     Button(action: submitComposer) {
                         Image(systemName: workspace.sending ? "ellipsis" : "arrow.up").font(.headline)
@@ -242,6 +258,8 @@ private struct CommandComposer: UIViewRepresentable {
     @Binding var text: String
     var focused: Binding<Bool>
     var onSubmit: () -> Void
+    var onHistory: (Bool) -> Void
+    var isBrowsingHistory: Bool
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
     func makeUIView(context: Context) -> CommandTextView {
@@ -259,13 +277,15 @@ private struct CommandComposer: UIViewRepresentable {
         view.smartInsertDeleteType = .no
         view.returnKeyType = .default
         view.accessibilityLabel = "Message or command"
-        view.accessibilityHint = "On a hardware keyboard, Return sends and Shift-Return inserts a new line."
+        view.accessibilityHint = "On a hardware keyboard, Return sends, Shift-Return inserts a new line, and Up recalls previous commands."
         view.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         return view
     }
     func updateUIView(_ view: CommandTextView, context: Context) {
         context.coordinator.parent = self
         view.onSubmit = onSubmit
+        view.onHistory = onHistory
+        view.isBrowsingHistory = isBrowsingHistory
         view.font = .monospacedSystemFont(ofSize: UIFont.preferredFont(forTextStyle: .body).pointSize, weight: .regular)
         if view.text != text, view.markedTextRange == nil {
             let selection = view.selectedRange
@@ -291,7 +311,7 @@ private struct CommandComposer: UIViewRepresentable {
         return CGSize(width: width, height: min(ceil(font.lineHeight * 6), max(ceil(font.lineHeight), content.height)))
     }
     static func dismantleUIView(_ view: CommandTextView, coordinator: Coordinator) {
-        view.wantsFocus = false; view.onSubmit = nil; view.delegate = nil
+        view.wantsFocus = false; view.onSubmit = nil; view.onHistory = nil; view.delegate = nil
         view.resignFirstResponder()
     }
     final class Coordinator: NSObject, UITextViewDelegate {
@@ -313,6 +333,8 @@ private struct CommandComposer: UIViewRepresentable {
 
 private final class CommandTextView: UITextView {
     var onSubmit: (() -> Void)?
+    var onHistory: ((Bool) -> Void)?
+    var isBrowsingHistory = false
     var wantsFocus = false
     private let placeholder = UILabel()
 
@@ -342,9 +364,20 @@ private final class CommandTextView: UITextView {
         let newline = UIKeyCommand(input: "\r", modifierFlags: .shift, action: #selector(insertLineBreak))
         submit.wantsPriorityOverSystemBehavior = true
         newline.wantsPriorityOverSystemBehavior = true
-        return [submit, newline] + (super.keyCommands ?? [])
+        var commands = [submit, newline]
+        if canRecallHistory(older: true) {
+            let up = UIKeyCommand(input: UIKeyCommand.inputUpArrow, modifierFlags: [], action: #selector(previousCommand))
+            up.wantsPriorityOverSystemBehavior = true; commands.append(up)
+        }
+        if canRecallHistory(older: false) {
+            let down = UIKeyCommand(input: UIKeyCommand.inputDownArrow, modifierFlags: [], action: #selector(nextCommand))
+            down.wantsPriorityOverSystemBehavior = true; commands.append(down)
+        }
+        return commands + (super.keyCommands ?? [])
     }
     override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {
+        if action == #selector(previousCommand) { return canRecallHistory(older: true) }
+        if action == #selector(nextCommand) { return canRecallHistory(older: false) }
         if action == #selector(submitCommand) || action == #selector(insertLineBreak) { return markedTextRange == nil }
         return super.canPerformAction(action, withSender: sender)
     }
@@ -356,7 +389,100 @@ private final class CommandTextView: UITextView {
         guard markedTextRange == nil else { return }
         insertText("\n")
     }
+    private func canRecallHistory(older: Bool) -> Bool {
+        guard markedTextRange == nil, selectedRange.length == 0 else { return false }
+        if isBrowsingHistory { return true }
+        // Preserve ordinary caret movement inside multiline/wrapped drafts.
+        guard let selectedTextRange else { return false }
+        let caret = caretRect(for: selectedTextRange.start)
+        let boundary = caretRect(for: older ? beginningOfDocument : endOfDocument)
+        return abs(caret.minY - boundary.minY) < 1
+    }
+    @objc private func previousCommand() {
+        guard canRecallHistory(older: true) else { return }
+        onHistory?(true)
+    }
+    @objc private func nextCommand() {
+        guard canRecallHistory(older: false) else { return }
+        onHistory?(false)
+    }
 }
+
+#if DEBUG
+/// Isolated sample data only; dispatches native control/key actions without SSH.
+@MainActor
+enum InputModeValidation {
+    static func run(workspace: HostWorkspace) async {
+        guard LibraryStore.screenshotScene?.hasPrefix("input") == true else { return }
+        func views() -> [UIView] {
+            func flatten(_ view: UIView) -> [UIView] { [view] + view.subviews.flatMap(flatten) }
+            return UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.flatMap(\.windows).flatMap(flatten)
+        }
+        func pause() async { try? await Task.sleep(for: .milliseconds(200)) }
+        func composer() -> CommandTextView? { views().compactMap { $0 as? CommandTextView }.first }
+        func press(_ input: String, modifiers: UIKeyModifierFlags = []) -> Bool {
+            guard let command = composer()?.keyCommands?.first(where: { $0.input == input && $0.modifierFlags == modifiers }) else { return false }
+            return UIApplication.shared.sendAction(command.action!, to: nil, from: command, for: nil)
+        }
+        var checks: [String: Bool] = [:]
+        _ = composer()?.becomeFirstResponder(); await pause()
+        checks["upRoutesToComposer"] = press(UIKeyCommand.inputUpArrow); await pause()
+        checks["upRecallsMultilineCommand"] = workspace.draft == "echo first\necho second"
+        _ = press(UIKeyCommand.inputUpArrow); await pause()
+        checks["repeatedUpRecallsOlderCommand"] = workspace.draft == "ls -la"
+        _ = press(UIKeyCommand.inputDownArrow); await pause()
+        _ = press(UIKeyCommand.inputDownArrow); await pause()
+        checks["downRestoresUnsubmittedDraft"] = workspace.draft == "unfinished"
+        checks["historyDoesNotSendRemoteInput"] = workspace.inputRevision == 0
+        workspace.draft = "first\nsecond\nthird"; await pause()
+        composer()?.selectedRange = NSRange(location: 8, length: 0)
+        checks["multilineMiddleKeepsVerticalCaretMovement"] = !(composer()?.keyCommands ?? []).contains { $0.action == NSSelectorFromString("previousCommand") || $0.action == NSSelectorFromString("nextCommand") }
+        composer()?.setMarkedText("candidate", selectedRange: NSRange(location: 9, length: 0)); await pause()
+        checks["markedTextSuppressesHistory"] = !(composer()?.keyCommands ?? []).contains { $0.action == NSSelectorFromString("previousCommand") || $0.action == NSSelectorFromString("nextCommand") }
+        composer()?.unmarkText()
+        workspace.draft = "saved draft"; await pause()
+        _ = press("\r", modifiers: .shift); await pause()
+        checks["shiftReturnStillInsertsNewline"] = workspace.draft.contains("\n") && workspace.inputRevision == 0
+        let draft = workspace.draft
+        let mode = views().compactMap { $0 as? UISegmentedControl }.first { control in
+            (0..<control.numberOfSegments).contains { control.titleForSegment(at: $0) == "Terminal" }
+        }
+        checks["explicitModePickerExists"] = mode != nil
+        mode?.selectedSegmentIndex = 1; mode?.sendActions(for: .valueChanged); await pause()
+        checks["terminalModeHidesComposer"] = workspace.terminalMode && composer() == nil
+        let direct = views().compactMap { $0 as? KeyInputView }.first
+        let terminal = views().compactMap { $0 as? PinnedTerminalView }.first
+        checks["terminalOwnsKeyboardFocus"] = workspace.directInput && (direct?.isFirstResponder == true || (terminal?.isFirstResponder == true && terminal?.keyboardEnabled == true))
+        let originalInput = direct?.onInput
+        if let direct {
+            var bytes = Data()
+            direct.onInput = { bytes.append($0) }
+            direct.insertText("ls"); direct.insertText("\n"); direct.deleteBackward()
+            if let up = direct.keyCommands?.first(where: { $0.input == UIKeyCommand.inputUpArrow }) {
+                _ = UIApplication.shared.sendAction(up.action!, to: direct, from: up, for: nil)
+            }
+            checks["directInputForwardsKeysImmediately"] = bytes == Data("ls\r\u{7f}\u{1b}[A".utf8)
+            direct.onInput = originalInput
+        }
+        workspace.directInput = false
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+        await pause()
+        checks["hideKeyboardKeepsTerminalModeWithoutComposer"] = workspace.terminalMode && composer() == nil && direct?.isFirstResponder != true && terminal?.keyboardEnabled != true
+        workspace.setTerminalMode(true); await pause()
+        checks["terminalKeyboardCanReopen"] = workspace.directInput && views().contains { ($0 is KeyInputView || $0 is PinnedTerminalView) && $0.isFirstResponder }
+        mode?.selectedSegmentIndex = 0; mode?.sendActions(for: .valueChanged); await pause()
+        checks["composeRestoresDraft"] = !workspace.terminalMode && !workspace.directInput && composer()?.text == draft
+        let revision = workspace.inputRevision
+        originalInput?(Data("late input".utf8)); await pause()
+        checks["leavingTerminalRejectsQueuedInput"] = workspace.inputRevision == revision
+        workspace.setTerminalMode(true); await pause()
+        let report: [String: Any] = ["checks": checks, "passed": checks.values.allSatisfy { $0 }]
+        if let data = try? JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys]) {
+            try? data.write(to: FileManager.default.temporaryDirectory.appendingPathComponent("mux-input-report.json"))
+        }
+    }
+}
+#endif
 
 private struct HostTrustView: View {
     let challenge: HostKeyChallenge

@@ -30,7 +30,7 @@ final class LibraryStore: ObservableObject {
         let index = arguments.firstIndex(of: "--mux-screenshot-scene")
         let argument = index.flatMap { $0 + 1 < arguments.count ? arguments[$0 + 1] : nil }
         let value = ProcessInfo.processInfo.environment["MUX_SCREENSHOT_SCENE"] ?? argument
-        return ["hosts", "smart", "original", "fit", "connection", "preview", "shell", "history", "history-original", "connecting", "connecting-hosts", "copy", "copy-original", "copy-conversation"].contains(value ?? "") ? value : nil
+        return ["hosts", "smart", "original", "fit", "connection", "preview", "shell", "history", "history-original", "connecting", "connecting-hosts", "copy", "copy-original", "copy-conversation", "input", "input-original"].contains(value ?? "") ? value : nil
     }
     #endif
 
@@ -177,6 +177,9 @@ final class LibraryStore: ObservableObject {
         return try? JSONDecoder().decode(type, from: data)
     }
     func writeLocal<T: Encodable>(_ value: T, name: String) throws {
+        #if DEBUG
+        if Self.screenshotScene != nil { return }
+        #endif
         try JSONEncoder().encode(value).write(to: directory.appendingPathComponent(name), options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
     }
 }

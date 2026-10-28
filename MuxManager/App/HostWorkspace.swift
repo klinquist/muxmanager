@@ -22,6 +22,7 @@ final class HostWorkspace: ObservableObject, Identifiable {
     @Published private(set) var closedWindowRevision = 0
     @Published private(set) var displayMode: DisplayMode = .smart
     @Published var conversation = false
+    @Published private(set) var terminalMode = false
     @Published var directInput = false
     @Published var controlModifier = false
     @Published var fontSize: Double = 14
@@ -55,6 +56,7 @@ final class HostWorkspace: ObservableObject, Identifiable {
     private var pollTask: Task<Void, Never>?
     private var pollingGeneration = UUID()
     private var drafts: [String: String] = [:]
+    private var commandHistories: [String: CommandHistory] = [:]
     private var lease: ResizeLease?
     private var serverIdentity = ""
     private var dirty = true
@@ -115,7 +117,13 @@ final class HostWorkspace: ObservableObject, Identifiable {
         selectedWindowID = ["hosts", "connection"].contains(scene) ? nil : "@1"
         remoteColumns = scene == "fit" ? 44 : 120
         remoteRows = 36
-        displayMode = ["original", "history-original", "copy-original"].contains(scene) ? .original : (scene == "fit" ? .fit : .smart)
+        displayMode = ["original", "history-original", "copy-original", "input-original"].contains(scene) ? .original : (scene == "fit" ? .fit : .smart)
+        if scene.hasPrefix("input") {
+            commandHistories["@1"] = CommandHistory()
+            commandHistories["@1"]?.record("ls -la")
+            commandHistories["@1"]?.record("echo first\necho second")
+            draft = "unfinished"
+        }
         if scene == "copy-conversation" { conversation = true }
         fontSize = UIDevice.current.userInterfaceIdiom == .pad ? 22 : 16
         if scene == "original" { fontSize = UIDevice.current.userInterfaceIdiom == .pad ? 18 : 13 }
@@ -588,8 +596,29 @@ final class HostWorkspace: ObservableObject, Identifiable {
         catch { self.error = "Could not save draft: \(error.localizedDescription)" }
     }
 
+    func setTerminalMode(_ enabled: Bool) {
+        terminalMode = enabled
+        if enabled { conversation = false }
+        directInput = enabled && isConnected
+        controlModifier = false
+    }
+
+    var isBrowsingCommandHistory: Bool {
+        guard let selectedWindowID else { return false }
+        return commandHistories[selectedWindowID]?.isBrowsing(draft) == true
+    }
+
+    func recallCommand(older: Bool) {
+        guard !sending, !busy, let selectedWindowID else { return }
+        var history = commandHistories[selectedWindowID] ?? CommandHistory()
+        let recalled = older ? history.previous(from: draft) : history.next(from: draft)
+        commandHistories[selectedWindowID] = history
+        if let recalled { draft = recalled }
+    }
+
     func sendDraft() async {
-        guard !sending, !busy, isConnected, let pane = selectedWindow?.paneID, !draft.isEmpty else { return }
+        guard !sending, !busy, isConnected, let window = selectedWindow, !draft.isEmpty else { return }
+        let pane = window.paneID
         inputRevision += 1
         let text = draft; sending = true
         let generation = connectionGeneration
@@ -600,12 +629,13 @@ final class HostWorkspace: ObservableObject, Identifiable {
             if let pending = incompleteCompletions[pane] {
                 let current = try await readShellCompletionScreen(pane: pane)
                 guard current.beforeCursor == pending.prompt.beforeCursor else {
-                    throw MuxError.message("A completion is still on the remote command line. Inspect or cancel it using Direct Keys before sending this draft.")
+                    throw MuxError.message("A completion is still on the remote command line. Inspect or cancel it using Terminal mode before sending this draft.")
                 }
                 incompleteCompletions.removeValue(forKey: pane)
             }
             try await paste(text, pane: pane, submit: true)
-            if draft == text { draft = "" }
+            commandHistories[window.id, default: CommandHistory()].record(text)
+            if selectedWindowID == window.id, draft == text { draft = "" }
         } catch { self.error = "Send was not confirmed; the draft was kept. Check the terminal before sending again. \(error.localizedDescription)" }
     }
 
@@ -641,7 +671,7 @@ final class HostWorkspace: ObservableObject, Identifiable {
 
     func completeInShell() async {
         guard !sending, !busy, isConnected, let pane = selectedWindow?.paneID else { return }
-        if directInput { await sendKey(Data([9])); return }
+        if terminalMode || directInput { await sendKey(Data([9])); return }
         let text = draft
         guard !text.contains(where: \.isNewline),
               text.unicodeScalars.allSatisfy({ $0.value >= 32 && $0.value != 127 }) else {
@@ -657,7 +687,7 @@ final class HostWorkspace: ObservableObject, Identifiable {
             let prompt = try await readShellCompletionScreen(pane: pane)
             if let pending = incompleteCompletions[pane] {
                 guard prompt.beforeCursor == pending.prompt.beforeCursor else {
-                    throw MuxError.message("The previous completion is still on the remote line. Inspect or cancel it using Direct Keys first.")
+                    throw MuxError.message("The previous completion is still on the remote line. Inspect or cancel it using Terminal mode first.")
                 }
                 incompleteCompletions.removeValue(forKey: pane)
             }
@@ -665,7 +695,7 @@ final class HostWorkspace: ObservableObject, Identifiable {
             // The temporary edit must start at an empty, recognizable shell prompt.
             // Never clear an existing command or send Enter as part of completion.
             guard prompt.resemblesEmptyPrompt else {
-                throw MuxError.message("Could not identify an empty shell prompt. Native completion is best effort; use Direct Keys for this prompt.")
+                throw MuxError.message("Could not identify an empty shell prompt. Native completion is best effort; use Terminal mode for this prompt.")
             }
             incompleteCompletions[pane] = IncompleteCompletion(prompt: prompt, draft: text)
             if !text.isEmpty { try await paste(text, pane: pane, submit: false) }
@@ -681,7 +711,7 @@ final class HostWorkspace: ObservableObject, Identifiable {
                 }
             }
             guard let completed else {
-                throw MuxError.message("The shell's completion could not be read safely. Check the terminal using Direct Keys; your draft is kept.")
+                throw MuxError.message("The shell's completion could not be read safely. Check the terminal using Terminal mode; your draft is kept.")
             }
             guard generation == connectionGeneration, isConnected, selectedWindow?.paneID == pane else { throw CancellationError() }
             if draft == text { draft = completed }
@@ -695,7 +725,7 @@ final class HostWorkspace: ObservableObject, Identifiable {
                 if current.beforeCursor == prompt.beforeCursor { restored = true; break }
             }
             guard restored else {
-                throw MuxError.message("The completed text is in the composer, but the remote line could not be cleared. Check it using Direct Keys before sending.")
+                throw MuxError.message("The completed text is in the composer, but the remote line could not be cleared. Check it using Terminal mode before sending.")
             }
             incompleteCompletions.removeValue(forKey: pane)
             if completed == text, draft == completed { completionHint = "No unique completion. Type more characters and try Tab again." }
@@ -713,12 +743,12 @@ final class HostWorkspace: ObservableObject, Identifiable {
               ["zsh", "bash"].contains((fields[0] as NSString).lastPathComponent.trimmingCharacters(in: CharacterSet(charactersIn: "-"))),
               let x = Int(fields[1]), let y = Int(fields[2]), let columns = Int(fields[3]),
               (0...1000).contains(y), fields[4] == "0", fields[5] == "0" else {
-            throw MuxError.message("Native completion currently supports recognizable zsh/bash prompts. Use Direct Keys for other shells or interactive completion tools.")
+            throw MuxError.message("Native completion currently supports recognizable zsh/bash prompts. Use Terminal mode for other shells or interactive completion tools.")
         }
         let lines = try await command("capture-pane -pJ -S 0 -E \(y) -t \(TmuxCommand.quote(pane))")
         guard let line = lines.last,
               let screen = ShellCompletionScreen(joinedLine: line, columns: columns, cursorX: x) else {
-            throw MuxError.message("Could not read the shell cursor safely. Use Direct Keys for this completion.")
+            throw MuxError.message("Could not read the shell cursor safely. Use Terminal mode for this completion.")
         }
         return screen
     }
