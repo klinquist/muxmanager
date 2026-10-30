@@ -91,6 +91,15 @@ final class ProtocolTests: XCTestCase {
         XCTAssertEqual(try TmuxCommand.pasteCommands("a\nb", pane: "%1", buffer: "mux-1", submit: false).count, 2)
         XCTAssertThrowsError(try TmuxCommand.pasteCommands("a\0b", pane: "%1", buffer: "mux-1", submit: true))
     }
+    func testTerminalPastePreservesShortAndMultilinePayloadWithoutSubmitting() throws {
+        for (text, normalized) in [("x", "x"), ("\n", "\n"), ("a\r\nb\rc🙂", "a\nb\nc🙂")] {
+            let commands = try TmuxCommand.pasteCommands(text, pane: "%1", buffer: "mux-paste", submit: false)
+            XCTAssertEqual(commands.count, 2)
+            XCTAssertEqual(commands[0], "set-buffer -b \"mux-paste\" -- \(TmuxCommand.quote(normalized))")
+            XCTAssertEqual(commands[1], "paste-buffer -p -r -d -b \"mux-paste\" -t \"%1\"")
+            XCTAssertFalse(commands.contains { $0.hasPrefix("send-keys") })
+        }
+    }
     func testSmartPreservesHardNewlinesAndFixedContent() {
         let input = "A long logical line with words.\nA deliberate new paragraph.\n```swift\nlet x = 1\n```\nname   value\n│ table │"
         let blocks = SmartPresentation.blocks(from: input)

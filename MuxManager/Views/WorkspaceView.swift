@@ -46,7 +46,8 @@ struct WorkspaceView: View {
                     .onChange(of: workspace.fontSize) { _, _ in updateViewport(geometry.size) }
                     .overlay(alignment: .topLeading) {
                         if workspace.directInput && (workspace.conversation || workspace.displayMode == .smart) {
-                            DirectKeyboard(onInput: { bytes in sendDirect(bytes) }, isActive: { workspace.directInput })
+                            DirectKeyboard(onInput: { bytes in sendDirect(bytes) },
+                                           onPaste: terminalPasteAction, isActive: { workspace.directInput })
                                 .frame(width: 1, height: 1).opacity(0.01)
                         }
                     }
@@ -184,7 +185,8 @@ struct WorkspaceView: View {
     }
 
     private func inputBar(window: RemoteWindow) -> some View {
-        VStack(spacing: 8) {
+        let paste = terminalPasteAction
+        return VStack(spacing: 8) {
             HStack(spacing: 8) {
               ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 6) {
@@ -192,6 +194,7 @@ struct WorkspaceView: View {
                     Button("Tab") { Task { await workspace.completeInShell() } }
                         .buttonStyle(.bordered)
                         .accessibilityHint("Complete the command using the remote shell and copy the result back to this input box without submitting it.")
+                    if workspace.terminalMode { key("Shift-Tab", "\u{1b}[Z") }
                     Button("Ctrl") { workspace.controlModifier.toggle() }.tint(workspace.controlModifier ? .orange : .mint)
                         .buttonStyle(.bordered).accessibilityAddTraits(workspace.controlModifier ? .isSelected : [])
                     key("Ctrl-C", "\u{3}")
@@ -202,6 +205,12 @@ struct WorkspaceView: View {
                     key("←", "\u{1b}[D"); key("→", "\u{1b}[C")
                     key("Enter", "\r")
                 }.font(.system(.caption, design: .monospaced)).disabled(!workspace.isConnected || workspace.sending)
+              }
+              if workspace.terminalMode {
+                  PasteButton(payloadType: String.self) { strings in paste(strings.joined(separator: "\n")) }
+                      .labelStyle(.iconOnly).tint(.mint)
+                      .accessibilityLabel("Paste into terminal")
+                      .disabled(!workspace.isConnected || workspace.sending || workspace.busy)
               }
               if keyboardVisible {
                   Button {
@@ -245,6 +254,17 @@ struct WorkspaceView: View {
     }
     private func sendDirect(_ data: Data) {
         Task { await workspace.sendKey(data) }
+    }
+    private var terminalPasteAction: (String) -> Void {
+        // A system Paste button can load clipboard providers asynchronously.
+        // Bind that request to this connection/window instead of retargeting
+        // pasted text if the user navigates before the payload arrives.
+        let windowID = workspace.selectedWindowID
+        let connectionIntent = workspace.connectionIntent
+        return { text in
+            guard let windowID else { return }
+            Task { await workspace.pasteIntoTerminal(text, windowID: windowID, connectionIntent: connectionIntent) }
+        }
     }
     private func updateViewport(_ size: CGSize) {
         let font = UIFont.monospacedSystemFont(ofSize: workspace.fontSize, weight: .regular)
@@ -449,6 +469,12 @@ enum InputModeValidation {
         }
         checks["explicitModePickerExists"] = mode != nil
         mode?.selectedSegmentIndex = 1; mode?.sendActions(for: .valueChanged); await pause()
+        // UIKit can still be dismissing the old composer while SwiftUI mounts
+        // the terminal responder (especially on a freshly booted simulator).
+        for _ in 0..<15 {
+            if views().contains(where: { ($0 is KeyInputView || $0 is PinnedTerminalView) && $0.isFirstResponder }) { break }
+            await pause()
+        }
         checks["terminalModeHidesComposer"] = workspace.terminalMode && composer() == nil
         let direct = views().compactMap { $0 as? KeyInputView }.first
         let terminal = views().compactMap { $0 as? PinnedTerminalView }.first
@@ -462,8 +488,46 @@ enum InputModeValidation {
                 _ = UIApplication.shared.sendAction(up.action!, to: direct, from: up, for: nil)
             }
             checks["directInputForwardsKeysImmediately"] = bytes == Data("ls\r\u{7f}\u{1b}[A".utf8)
+            bytes = Data()
+            let shiftTab = direct.keyCommands?.first { $0.input == "\t" && $0.modifierFlags == .shift }
+            checks["shiftTabHasPriority"] = shiftTab?.wantsPriorityOverSystemBehavior == true
+            if let shiftTab { _ = UIApplication.shared.sendAction(shiftTab.action!, to: nil, from: shiftTab, for: nil) }
+            checks["shiftTabForwardsBackTabOnce"] = bytes == Data("\u{1b}[Z".utf8)
             direct.onInput = originalInput
         }
+        let clipboard = "pasted 🙂\nsecond line\n"
+        UIPasteboard.general.string = clipboard
+        let pasteResponder: UIView? = direct ?? terminal.map { $0 as UIView }
+        var receivedPastes: [String] = []
+        let originalPaste = direct?.onPaste ?? terminal?.onPaste
+        if let direct { direct.onPaste = { receivedPastes.append($0) } }
+        if let terminal { terminal.onPaste = { receivedPastes.append($0) } }
+        let commandV = pasteResponder?.keyCommands?.first { $0.input == "v" && $0.modifierFlags == .command }
+        checks["commandVHasPriority"] = commandV?.wantsPriorityOverSystemBehavior == true
+        checks["terminalOffersNativePaste"] = pasteResponder?.canPerformAction(#selector(UIResponder.paste(_:)), withSender: nil) == true
+        if let commandV { _ = UIApplication.shared.sendAction(commandV.action!, to: nil, from: commandV, for: nil) }
+        checks["nativePastePreservesWholePayloadOnce"] = receivedPastes == [clipboard]
+        UIPasteboard.general.string = "\n"
+        if let commandV { _ = UIApplication.shared.sendAction(commandV.action!, to: nil, from: commandV, for: nil) }
+        checks["singleNewlineIsPasteInsteadOfReturn"] = receivedPastes == [clipboard, "\n"]
+        checks["pasteLeavesComposerDraftUntouched"] = workspace.draft == draft
+        if let terminal {
+            var backTabs = 0
+            let original = terminal.onBackTab
+            terminal.onBackTab = { backTabs += 1 }
+            let backTab = terminal.keyCommands?.first { $0.input == "\t" && $0.modifierFlags == .shift }
+            checks["shiftTabHasPriority"] = backTab?.wantsPriorityOverSystemBehavior == true
+            if let backTab { _ = UIApplication.shared.sendAction(backTab.action!, to: nil, from: backTab, for: nil) }
+            checks["shiftTabForwardsBackTabOnce"] = backTabs == 1
+            terminal.onBackTab = original
+        }
+        // A stale provider/window/connection must not retarget clipboard text.
+        let beforePaste = workspace.inputRevision
+        await workspace.pasteIntoTerminal(clipboard, windowID: "@not-selected", connectionIntent: workspace.connectionIntent)
+        await workspace.pasteIntoTerminal(clipboard, windowID: workspace.selectedWindowID ?? "", connectionIntent: UUID())
+        checks["pasteRejectsStaleDestination"] = workspace.inputRevision == beforePaste
+        if let direct { direct.onPaste = originalPaste }
+        if let terminal { terminal.onPaste = originalPaste }
         workspace.directInput = false
         UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
         await pause()

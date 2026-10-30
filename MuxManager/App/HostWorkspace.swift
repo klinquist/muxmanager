@@ -669,6 +669,29 @@ final class HostWorkspace: ObservableObject, Identifiable {
         await task.value
     }
 
+    /// Clipboard text is a paste even if it is only one character or newline.
+    /// Keep it separate from key events so tmux can supply bracketed-paste
+    /// markers, and never append an extra Enter or apply the Ctrl toggle.
+    func pasteIntoTerminal(_ text: String, windowID: String, connectionIntent: UUID) async {
+        guard !text.isEmpty, !sending, !busy, isConnected, terminalMode,
+              self.connectionIntent == connectionIntent,
+              let window = selectedWindow, window.id == windowID else { return }
+        inputRevision += 1; controlModifier = false
+        let previous = inputTail
+        let generation = connectionGeneration
+        let pane = window.paneID
+        let task = Task { [weak self] in
+            await previous?.value
+            guard let self, self.connectionGeneration == generation, self.isConnected,
+                  self.connectionIntent == connectionIntent, self.terminalMode,
+                  self.selectedWindowID == windowID, self.selectedWindow?.paneID == pane else { return }
+            do { try await self.paste(text, pane: pane, submit: false) }
+            catch { self.error = "Paste was not confirmed. Check the terminal before pasting again. \(error.localizedDescription)" }
+        }
+        inputTail = task
+        await task.value
+    }
+
     func completeInShell() async {
         guard !sending, !busy, isConnected, let pane = selectedWindow?.paneID else { return }
         if terminalMode || directInput { await sendKey(Data([9])); return }

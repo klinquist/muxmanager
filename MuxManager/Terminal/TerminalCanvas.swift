@@ -23,6 +23,14 @@ struct TerminalCanvas: UIViewRepresentable {
         view.followLive = follow
         view.onManualScroll = { follow = false }
         view.terminal.keyboardEnabled = workspace.directInput && workspace.isConnected
+        let windowID = workspace.selectedWindowID
+        let connectionIntent = workspace.connectionIntent
+        view.terminal.pasteEnabled = workspace.terminalMode && workspace.isConnected && !workspace.sending && !workspace.busy
+        view.terminal.onPaste = { text in
+            guard let windowID else { return }
+            Task { await workspace.pasteIntoTerminal(text, windowID: windowID, connectionIntent: connectionIntent) }
+        }
+        view.terminal.onBackTab = { Task { await workspace.sendKey(Data("\u{1b}[Z".utf8)) } }
         if view.terminal.font.pointSize != workspace.fontSize {
             view.terminal.font = .monospacedSystemFont(ofSize: workspace.fontSize, weight: .regular)
         }
@@ -64,13 +72,41 @@ struct TerminalCanvas: UIViewRepresentable {
             guard let url = URL(string: link), ["https", "http"].contains(url.scheme?.lowercased() ?? "") else { return }
             Task { @MainActor in UIApplication.shared.open(url) }
         }
-        // Clipboard reads and remote OSC writes retain SwiftTerm's deny-by-default behavior.
+        // Remote OSC clipboard reads/writes retain SwiftTerm's deny-by-default behavior.
     }
 }
 
 final class PinnedTerminalView: TerminalView {
     var pinnedColumns = 80
     var pinnedRows = 24
+    var pasteEnabled = false
+    var onPaste: ((String) -> Void)?
+    var onBackTab: (() -> Void)?
+    override func paste(_ sender: Any?) {
+        // SwiftTerm's non-open canPerformAction allows standard edit actions
+        // only. Route the high-priority back-tab command through this supported
+        // entry point; it must not read the clipboard or fall through to Paste.
+        if let command = sender as? UIKeyCommand, command.input == "\t", command.modifierFlags == .shift {
+            if keyboardEnabled { onBackTab?() }
+            return
+        }
+        guard pasteEnabled, let text = UIPasteboard.general.string else { return }
+        // Use the same tmux paste path as Smart and the Paste button, rather
+        // than splitting SwiftTerm's bracketed-paste bytes across SSH commands.
+        onPaste?(text)
+    }
+    override var keyCommands: [UIKeyCommand]? {
+        var commands = super.keyCommands ?? []
+        if pasteEnabled {
+            let paste = UIKeyCommand(input: "v", modifierFlags: .command, action: #selector(paste(_:)))
+            paste.wantsPriorityOverSystemBehavior = true; commands.append(paste)
+        }
+        if keyboardEnabled {
+            let backTab = UIKeyCommand(input: "\t", modifierFlags: .shift, action: #selector(paste(_:)))
+            backTab.wantsPriorityOverSystemBehavior = true; commands.append(backTab)
+        }
+        return commands
+    }
     var keyboardEnabled = false {
         didSet {
             if !inputConfigured {
@@ -401,18 +437,24 @@ final class BottomContentController<Content: View>: UIViewController, UIScrollVi
 
 struct DirectKeyboard: UIViewRepresentable {
     var onInput: (Data) -> Void
+    var onPaste: (String) -> Void = { _ in }
     var isActive: () -> Bool = { true }
     func makeUIView(context: Context) -> KeyInputView { KeyInputView() }
     func updateUIView(_ view: KeyInputView, context: Context) {
         view.onInput = { bytes in if isActive() { onInput(bytes) } }
+        view.onPaste = { text in if isActive() { onPaste(text) } }
         view.isActive = isActive
         view.requestFocus()
     }
-    static func dismantleUIView(_ view: KeyInputView, coordinator: ()) { view.resignFirstResponder() }
+    static func dismantleUIView(_ view: KeyInputView, coordinator: ()) {
+        view.isActive = { false }; view.onInput = nil; view.onPaste = nil
+        view.resignFirstResponder()
+    }
 }
 
 final class KeyInputView: UIView, UIKeyInput {
     var onInput: ((Data) -> Void)?
+    var onPaste: ((String) -> Void)?
     var isActive: () -> Bool = { true }
     var hasText: Bool { true }
     var autocorrectionType: UITextAutocorrectionType = .no
@@ -434,6 +476,15 @@ final class KeyInputView: UIView, UIKeyInput {
     }
     func insertText(_ text: String) { onInput?(Data((text == "\n" ? "\r" : text).utf8)) }
     func deleteBackward() { onInput?(Data([127])) }
+    override func paste(_ sender: Any?) {
+        guard isActive(), let text = UIPasteboard.general.string else { return }
+        onPaste?(text)
+    }
+    override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {
+        if action == #selector(paste(_:)) { return isActive() && UIPasteboard.general.hasStrings }
+        if action == #selector(specialKey(_:)) || action == #selector(controlKey(_:)) { return isActive() }
+        return super.canPerformAction(action, withSender: sender)
+    }
     override var keyCommands: [UIKeyCommand]? {
         var commands = [UIKeyCommand.inputUpArrow, UIKeyCommand.inputDownArrow, UIKeyCommand.inputLeftArrow,
                         UIKeyCommand.inputRightArrow, UIKeyCommand.inputEscape, "\t"].map {
@@ -442,9 +493,16 @@ final class KeyInputView: UIView, UIKeyInput {
         commands += "abcdefghijklmnopqrstuvwxyz".map {
             UIKeyCommand(input: String($0), modifierFlags: .control, action: #selector(controlKey(_:)))
         }
+        commands.append(UIKeyCommand(input: "\t", modifierFlags: .shift, action: #selector(specialKey(_:))))
+        commands.append(UIKeyCommand(input: "v", modifierFlags: .command, action: #selector(paste(_:))))
+        for command in commands { command.wantsPriorityOverSystemBehavior = true }
         return commands
     }
     @objc private func specialKey(_ command: UIKeyCommand) {
+        guard isActive() else { return }
+        if command.input == "\t", command.modifierFlags == .shift {
+            onInput?(Data("\u{1b}[Z".utf8)); return
+        }
         let sequences = [UIKeyCommand.inputUpArrow: "\u{1b}[A", UIKeyCommand.inputDownArrow: "\u{1b}[B",
                          UIKeyCommand.inputRightArrow: "\u{1b}[C", UIKeyCommand.inputLeftArrow: "\u{1b}[D",
                          UIKeyCommand.inputEscape: "\u{1b}", "\t": "\t"]
