@@ -124,6 +124,7 @@ struct WorkspaceView: View {
         .onChange(of: workspace.inputRevision) { _, _ in readingCapture = nil; follow = true; liveToken += 1 }
         .onChange(of: workspace.directInput) { _, direct in if direct { composerFocused = false } }
         .onChange(of: workspace.closedWindowRevision) { _, _ in returnToWindows() }
+        .onChange(of: workspace.notificationFocusRevision) { _, _ in composerFocused = false; showLive() }
         .onChange(of: workspace.state) { _, state in
             if state == .disconnected || state == .disconnecting { returnToWindows() }
         }

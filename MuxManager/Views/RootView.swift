@@ -9,6 +9,7 @@ struct RootView: View {
     @State private var editingProfile: ConnectionProfile?
     @State private var showLicenses = false
     @State private var showSyncDiagnostics = false
+    @State private var showNotificationSettings = false
     @State private var diagnosticWorkspace: HostWorkspace?
     @State private var managementRequest: ManagementRequest?
 
@@ -57,6 +58,7 @@ struct RootView: View {
 
                 if let workspace = model.activeWorkspace {
                     WindowSidebar(workspace: workspace, selected: {
+                        model.cancelNotificationNavigation()
                         preferredColumn = .detail
                         if UIDevice.current.userInterfaceIdiom == .phone { visibility = .detailOnly }
                     }, manage: { action in managementRequest = ManagementRequest(workspace: workspace, action: action) })
@@ -72,6 +74,7 @@ struct RootView: View {
                         }
                         Button("Open source licenses", systemImage: "doc.text") { showLicenses = true }
                         Button("iCloud diagnostics", systemImage: "icloud") { showSyncDiagnostics = true }
+                        Button("Codex notifications", systemImage: "bell") { showNotificationSettings = true }
                         Link("Support", destination: URL(string: "https://klinquist.github.io/muxmanager/support/")!)
                         Link("Privacy policy", destination: URL(string: "https://klinquist.github.io/muxmanager/privacy/")!)
                         Link("Source code", destination: URL(string: "https://github.com/klinquist/muxmanager")!)
@@ -130,12 +133,23 @@ struct RootView: View {
                     try? await Task.sleep(for: .seconds(2))
                     await InputModeValidation.run(workspace: workspace)
                 }
+                if scene == "attention", let workspace = model.activeWorkspace {
+                    showNotificationSettings = true
+                    await workspace.validateAttentionMonitoring()
+                }
             }
             #endif
         }
         .sheet(item: $editingProfile) { profile in ConnectionEditor(profile: profile) }
         .sheet(isPresented: $showLicenses) { OpenSourceLicensesView() }
         .sheet(isPresented: $showSyncDiagnostics) { CloudSyncDiagnosticsView() }
+        .sheet(isPresented: $showNotificationSettings) { CodexNotificationSettingsView(notifications: model.notifications) }
+        .onChange(of: model.notificationNavigationRevision, initial: true) { _, revision in
+            guard revision > 0 else { return }
+            showNotificationSettings = false; dismissSheetsForNotification()
+            preferredColumn = .detail
+            if UIDevice.current.userInterfaceIdiom == .phone { visibility = .detailOnly }
+        }
         .sheet(item: $diagnosticWorkspace) { ConnectionDiagnosticsView(workspace: $0) }
         .sheet(item: $managementRequest) { request in
             ManagementSheet(workspace: request.workspace, action: request.action) { managementRequest = nil }
@@ -143,6 +157,11 @@ struct RootView: View {
         .alert("Mux Manager", isPresented: Binding(get: { library.error != nil }, set: { if !$0 { library.error = nil } })) {
             Button("OK") { library.error = nil }
         } message: { Text(library.error ?? "") }
+    }
+    private func dismissSheetsForNotification() {
+        // Dismiss sheets so a notification tap can reveal its destination.
+        diagnosticWorkspace = nil; showSyncDiagnostics = false; showLicenses = false
+        editingProfile = nil; managementRequest = nil
     }
 }
 

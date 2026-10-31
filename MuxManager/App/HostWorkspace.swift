@@ -20,6 +20,7 @@ final class HostWorkspace: ObservableObject, Identifiable {
     @Published private(set) var selectedSessionID: String?
     @Published private(set) var selectedWindowID: String?
     @Published private(set) var closedWindowRevision = 0
+    @Published private(set) var notificationFocusRevision = 0
     @Published private(set) var displayMode: DisplayMode = .smart
     @Published var conversation = false
     @Published private(set) var terminalMode = false
@@ -88,6 +89,17 @@ final class HostWorkspace: ObservableObject, Identifiable {
     private var reconnectWindowID: String?
     private var captureDiagnostics = "No terminal capture yet"
     private var lastCaptureSignature: String?
+    private var attentionEnabled = false
+    private var attentionRuntimeAvailable = true
+    private var attentionTask: Task<Void, Never>?
+    private var attentionEpoch = UUID()
+    private var attentionTracker = CodexAttentionTracker()
+    private var attentionHandler: ((CodexPaneTarget, CodexAttentionState) -> Void)?
+    private let attentionClockStart = ContinuousClock.now
+    private var attentionTime: TimeInterval {
+        let duration = attentionClockStart.duration(to: .now).components
+        return Double(duration.seconds) + Double(duration.attoseconds) / 1e18
+    }
 
     init(profile: ConnectionProfile, library: LibraryStore) {
         self.id = profile.id; self.profile = profile; self.library = library
@@ -286,6 +298,7 @@ final class HostWorkspace: ObservableObject, Identifiable {
 
     func connect(automatically: Bool = false) async {
         guard canConnect else { return }
+        stopAttentionMonitoring()
         if !automatically { connectionIntent = UUID(); isBackgrounded = false }
         state = .connecting; error = nil; challenge = nil
         backgroundOutputPaused = false
@@ -327,6 +340,7 @@ final class HostWorkspace: ObservableObject, Identifiable {
             connectionProgress = nil; connectionSetupGeneration = nil
             if isBackgrounded { await prepareForBackground(expectedIntent: connectionIntent) }
             if !isBackgrounded && !resumingFromBackground { startPolling() }
+            startAttentionMonitoring()
         } catch {
             if generation == connectionGeneration { state = .failed(error.localizedDescription) }
         }
@@ -350,6 +364,7 @@ final class HostWorkspace: ObservableObject, Identifiable {
         state = .disconnecting
         connectionProgress = nil
         connectionGeneration = UUID(); attachmentGeneration = UUID(); pollTask?.cancel(); pollTask = nil
+        stopAttentionMonitoring()
         draftSaveTask?.cancel(); persistDrafts()
         do { try await restoreSize() } catch {
             record("resize", "Restoration pending: \(error.localizedDescription)")
@@ -374,7 +389,10 @@ final class HostWorkspace: ObservableObject, Identifiable {
         }
     }
 
-    func unpauseAfterBackground() { isBackgrounded = false }
+    func unpauseAfterBackground() {
+        isBackgrounded = false; attentionRuntimeAvailable = true
+        startAttentionMonitoring()
+    }
 
     func prepareForBackground(expectedIntent: UUID) async {
         let generation = backgroundGeneration
@@ -424,13 +442,16 @@ final class HostWorkspace: ObservableObject, Identifiable {
     }
 
     func backgroundTimeExpired() {
+        attentionRuntimeAvailable = false
+        stopAttentionMonitoring()
         record("lifecycle", "iOS background runtime ended; leaving SSH parked and checking it on return")
     }
 
     func resumeFromBackground(forceReconnect: Bool) async {
         isBackgrounded = false
+        attentionRuntimeAvailable = true
         resumingFromBackground = true
-        defer { resumingFromBackground = false }
+        defer { resumingFromBackground = false; startAttentionMonitoring() }
         let intent = connectionIntent
         await backgroundPreparation?.task.value
         guard !isBackgrounded, connectionIntent == intent else { return }
@@ -933,6 +954,103 @@ final class HostWorkspace: ObservableObject, Identifiable {
         if joinedCapture != prose { joinedCapture = prose }
     }
 
+    func configureAttention(enabled: Bool, handler: @escaping (CodexPaneTarget, CodexAttentionState) -> Void) {
+        attentionHandler = handler
+        if attentionEnabled != enabled { stopAttentionMonitoring(); attentionEnabled = enabled }
+        startAttentionMonitoring()
+    }
+
+    private func stopAttentionMonitoring() {
+        // Rotate ownership instead of cancelling an in-flight tmux response.
+        attentionEpoch = UUID(); attentionTask = nil
+        attentionTracker = CodexAttentionTracker()
+    }
+
+    private func observeAttention(target: CodexPaneTarget, screen: String) {
+        guard attentionEnabled, attentionRuntimeAvailable, isConnected else { return }
+        let state = CodexAttention.state(screen: screen, command: target.command)
+        if let event = attentionTracker.observe(pane: target.paneID, state: state, at: attentionTime) {
+            record("notifications", "Codex needs attention: window=\(target.windowID) pane=\(target.paneID)")
+            attentionHandler?(target, event)
+        }
+    }
+
+    private func startAttentionMonitoring() {
+        guard attentionEnabled, attentionRuntimeAvailable, isConnected, attentionTask == nil else { return }
+        let epoch = UUID(); attentionEpoch = epoch
+        let generation = connectionGeneration
+        attentionTask = Task { [weak self] in
+            var targets: [CodexPaneTarget] = []
+            var nextDiscovery: TimeInterval = 0
+            var cursor = 0
+            var lastError: TimeInterval = -.infinity
+            while let self, self.attentionEpoch == epoch, self.connectionGeneration == generation,
+                  self.isConnected, self.attentionEnabled, self.attentionRuntimeAvailable {
+                if !self.busy && !self.sending && self.connectionSetupGeneration == nil && !self.resumingFromBackground {
+                    do {
+                        let now = self.attentionTime
+                        if now >= nextDiscovery {
+                            let lines = try await self.command("list-windows -a -F \(TmuxCommand.quote(TmuxCommand.attentionFormat))")
+                            guard self.attentionEpoch == epoch, self.connectionGeneration == generation else { break }
+                            let all = TmuxCommand.attentionTargets(lines)
+                            self.attentionTracker.retain(panes: Set(all.filter { CodexAttention.isCandidate(command: $0.command) }.map(\.paneID)))
+                            // Linked windows occur in multiple sessions. Monitor
+                            // each active pane once and prefer the viewed session.
+                            var seen = Set<String>()
+                            targets = all.sorted { ($0.sessionID == self.selectedSessionID ? 0 : 1) < ($1.sessionID == self.selectedSessionID ? 0 : 1) }
+                                .filter { seen.insert($0.paneID).inserted && CodexAttention.isCandidate(command: $0.command) }
+                            nextDiscovery = now + 6
+                        }
+                        // Round-robin bounds each pass so dozens of windows don't
+                        // monopolize the SSH command queue or starve older panes.
+                        for _ in 0..<min(8, targets.count) {
+                            guard self.attentionEpoch == epoch, self.connectionGeneration == generation,
+                                  self.attentionRuntimeAvailable, self.isConnected, !self.busy, !self.sending else { break }
+                            let target = targets[cursor % targets.count]; cursor += 1
+                            let lines = try await self.command("capture-pane -pJ -S 0 -t \(TmuxCommand.quote(target.paneID))")
+                            guard self.attentionEpoch == epoch, self.connectionGeneration == generation else { break }
+                            self.observeAttention(target: target, screen: lines.joined(separator: "\n"))
+                        }
+                    } catch {
+                        // Never log pane contents or replay input. A closed or
+                        // disappearing window is retried by the next discovery.
+                        let now = self.attentionTime
+                        if now - lastError >= 30 {
+                            self.record("notifications", "Monitoring query failed; will retry")
+                            lastError = now
+                        }
+                        nextDiscovery = 0
+                    }
+                }
+                do { try await Task.sleep(for: .milliseconds(1500)) } catch { break }
+            }
+            if self?.attentionEpoch == epoch { self?.attentionTask = nil }
+        }
+    }
+
+    func openNotificationWindow(_ target: CodexNotificationTarget, isCurrent: () -> Bool) async {
+        guard isConnected, !busy, !sending, target.hostID == id else { return }
+        let generation = connectionGeneration
+        busy = true
+        defer { busy = false }
+        do {
+            try await discoverSessions()
+            guard sessions.contains(where: { $0.id == target.sessionID }) else { throw MuxError.message("This tmux session is no longer available.") }
+            let lines = try await command("list-windows -t \(TmuxCommand.quote(target.sessionID)) -F \(TmuxCommand.quote(TmuxCommand.windowFormat))")
+            guard isCurrent(), isConnected, generation == connectionGeneration else { return }
+            guard TmuxCommand.windows(lines, session: target.sessionID).contains(where: { $0.id == target.windowID }) else {
+                throw MuxError.message("This tmux window is no longer available.")
+            }
+            if selectedSessionID != target.sessionID { try await restoreSize(); try await attach(target.sessionID) }
+            else { try await discoverWindows() }
+            guard isCurrent(), isConnected, generation == connectionGeneration else { return }
+            if selectedWindowID != target.windowID { try await restoreSize(); try await chooseWindow(target.windowID) }
+            guard isCurrent(), isConnected, generation == connectionGeneration else { return }
+            directInput = false; notificationFocusRevision += 1
+            if selectedWindow?.paneID != target.paneID { error = "This window now has a different active pane." }
+        } catch { self.error = error.localizedDescription }
+    }
+
     private func handle(_ event: ControlEvent) {
         switch event {
         case .output(let pane, _): if pane == selectedWindow?.paneID { dirty = true }
@@ -999,3 +1117,115 @@ final class HostWorkspace: ObservableObject, Identifiable {
         }
     }
 }
+
+#if DEBUG
+/// A fake tmux peer for exercising the production monitor without SSH, user
+/// data, notification authorization, or posting OS notifications.
+private actor AttentionFixturePeer {
+    private var channel: ControlChannel?
+    private var sequence = 1
+    private var screens: [String: String] = Dictionary(uniqueKeysWithValues: (1...11).map {
+        ("%\($0)", [1, 11].contains($0) ? "• Working (5s · esc to interrupt)\n›\n100% context left" : "• Complete\n›\n100% context left")
+    })
+    private(set) var reads: [String: Int] = [:]
+    private(set) var commands: [String] = []
+    func install(_ value: ControlChannel?) { channel = value }
+    func screen(_ pane: String, _ value: String) { screens[pane] = value }
+    func write(_ data: Data) async throws {
+        let command = String(decoding: data, as: UTF8.self).trimmingCharacters(in: .newlines)
+        commands.append(command)
+        let lines: [String]
+        if command.hasPrefix("list-windows -a") {
+            lines = (1...11).map { "\($0 == 11 ? "$2" : "$1")\t@\($0)\t\($0 == 11 ? "review-needed" : "project-\($0)")\t%\($0)\tcodex" }
+                + ["$2\t@1\tlinked-project\t%1\tcodex"]
+        } else if command.hasPrefix("list-sessions") { lines = ["$1\twork", "$2\tother"] }
+        else if command.hasPrefix("list-windows") {
+            lines = (1...11).map { "@\($0)\t\($0 - 1)\tproject-\($0)\t%\($0)\t120\t36\tcodex" }
+        } else if command.hasPrefix("capture-pane"), let pane = screens.keys.first(where: { command.hasSuffix(TmuxCommand.quote($0)) }) {
+            reads[pane, default: 0] += 1
+            lines = screens[pane]!.components(separatedBy: "\n")
+        } else if command.hasPrefix("display-message") { lines = ["120 36 0 1 0 0 1 0 2000 0"] }
+        else if command.hasPrefix("refresh-client") { lines = [] }
+        else { throw MuxError.message("Unexpected fixture command.") }
+        sequence += 1
+        let token = "\(sequence) \(sequence) 0"
+        await channel?.receive(Data(("%begin \(token)\n" + lines.map { $0 + "\n" }.joined() + "%end \(token)\n").utf8))
+    }
+}
+
+extension HostWorkspace {
+    func validateAttentionMonitoring() async {
+        guard LibraryStore.screenshotScene == "attention" else { return }
+        var checks: [String: Bool] = [:]
+        var events: [(CodexPaneTarget, CodexAttentionState)] = []
+        let peer = AttentionFixturePeer()
+        let channel = ControlChannel(writer: { try await peer.write($0) }, onEvent: { _ in })
+        await peer.install(channel)
+        await channel.receive(Data("%begin 0 0 0\n%end 0 0 0\n".utf8))
+        control = channel
+        configureAttention(enabled: true) { events.append(($0, $1)) }
+        func wait(_ condition: () async -> Bool) async -> Bool {
+            let end = ContinuousClock.now.advanced(by: .seconds(15))
+            while ContinuousClock.now < end {
+                if await condition() { return true }
+                try? await Task.sleep(for: .milliseconds(100))
+            }
+            return false
+        }
+        let sampled = await wait { await peer.reads.count == 11 }
+        checks["roundRobinSamplesMoreThanOneBatchAcrossSessions"] = sampled
+        checks["initialIdleWindowsDoNotNotify"] = events.isEmpty
+        await peer.screen("%1", "• Done\n›\n100% context left")
+        await peer.screen("%11", "Which branch should I use?\n›\n100% context left")
+        let completed = await wait { events.count >= 2 }
+        checks["completionAndQuestionGenerateEvents"] = completed && events.contains { $0.0.paneID == "%1" && $0.1 == .ready }
+            && events.contains { $0.0.sessionID == "$2" && $0.0.windowName == "review-needed" && $0.1 == .needsInput }
+        try? await Task.sleep(for: .seconds(3))
+        checks["linkedWindowsAndRepeatedScreensDoNotDuplicate"] = events.count == 2
+        pauseForBackground()
+        await prepareForBackground(expectedIntent: connectionIntent)
+        let reads = await peer.reads["%1", default: 0]
+        await peer.screen("%1", "• Working (esc to interrupt)\n›\n100% context left")
+        _ = await wait { await peer.reads["%1", default: 0] >= reads + 2 }
+        await peer.screen("%1", "Would you like to run this command?\n› 1. Yes, proceed\n2. No\nEnter to confirm")
+        checks["backgroundRuntimeStillDetectsApproval"] = await wait { events.count == 3 }
+        backgroundTimeExpired()
+        try? await Task.sleep(for: .milliseconds(500))
+        let stopped = await peer.commands.count
+        try? await Task.sleep(for: .seconds(2))
+        checks["runtimeExpirationStopsQueries"] = await peer.commands.count == stopped
+        unpauseAfterBackground()
+        let beforeRestart = events.count
+        try? await Task.sleep(for: .seconds(4))
+        checks["restartBaselinesDoNotReplayOldAlerts"] = events.count == beforeRestart
+        configureAttention(enabled: false) { _, _ in }
+        try? await Task.sleep(for: .milliseconds(300))
+        let disabledCount = await peer.commands.count
+        try? await Task.sleep(for: .seconds(2))
+        checks["disablingStopsMonitorQueries"] = await peer.commands.count == disabledCount
+        let target = CodexNotificationTarget(hostID: id, sessionID: "$1", windowID: "@2", paneID: "%2")
+        let focus = notificationFocusRevision
+        await openNotificationWindow(target, isCurrent: { true })
+        checks["notificationTargetOpensWindowAndResumesLive"] = selectedWindowID == "@2" && notificationFocusRevision == focus + 1
+        error = nil
+        let missing = CodexNotificationTarget(hostID: id, sessionID: "$1", windowID: "@999", paneID: "%999")
+        await openNotificationWindow(missing, isCurrent: { true })
+        checks["closedWindowDoesNotSelectAnotherOrCreateAnything"] = selectedWindowID == "@2" && error?.contains("no longer available") == true
+        error = nil
+        let content = CodexNotifications.content(hostName: "Fixture host", windowName: "project-2", state: .needsInput, target: target)
+        checks["notificationContainsNamesAndStableDestination"] = content.title == "Fixture host · project-2"
+            && CodexNotificationTarget(userInfo: content.userInfo) == target && content.userInfo.count == 4
+        checks["notificationHasNoTerminalResponseContent"] = content.body == "Codex is waiting for input."
+        checks["malformedNotificationDestinationRejected"] = CodexNotificationTarget(userInfo: ["hostID": id.uuidString, "sessionID": "bad", "windowID": "@1", "paneID": "%1"]) == nil
+        let requests = await peer.commands
+        checks["monitorNeverSendsInputCreatesWindowsOrChangesDesktopSelection"] = requests.allSatisfy {
+            ["list-windows", "list-sessions", "capture-pane", "display-message", "refresh-client"].contains(where: $0.hasPrefix)
+        }
+        await channel.close(); await peer.install(nil); control = nil
+        let report: [String: Any] = ["checks": checks, "passed": checks.values.allSatisfy { $0 }, "queryCount": requests.count]
+        if let data = try? JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys]) {
+            try? data.write(to: FileManager.default.temporaryDirectory.appendingPathComponent("mux-attention-report.json"))
+        }
+    }
+}
+#endif

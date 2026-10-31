@@ -133,6 +133,17 @@ public enum TmuxCommand {
     }
     public static let sessionFormat = "#{session_id}\t#{q:session_name}"
     public static let windowFormat = "#{window_id}\t#{window_index}\t#{q:window_name}\t#{pane_id}\t#{pane_width}\t#{pane_height}\t#{q:pane_current_command}"
+    public static let attentionFormat = "#{session_id}\t#{window_id}\t#{q:window_name}\t#{pane_id}\t#{q:pane_current_command}"
+
+    public static func attentionTargets(_ lines: [String]) -> [CodexPaneTarget] {
+        lines.compactMap { line in
+            let fields = line.components(separatedBy: "\t")
+            guard fields.count == 5, isID(fields[0], prefix: "$"), isID(fields[1], prefix: "@"),
+                  isID(fields[3], prefix: "%") else { return nil }
+            return CodexPaneTarget(sessionID: fields[0], windowID: fields[1], windowName: unquoteFormat(fields[2]),
+                                   paneID: fields[3], command: unquoteFormat(fields[4]))
+        }
+    }
 
     public static func sessions(_ lines: [String]) -> [RemoteSession] {
         lines.compactMap { line in

@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		3EAB34D47333AABE7A63024C /* CodexNotifications.swift in Sources */ = {isa = PBXBuildFile; fileRef = 59F5E98E1B8C05CE194E7F8D /* CodexNotifications.swift */; };
 		0BD26182FC04FC6905B14A78 /* MuxManager/Terminal/TerminalCanvas.swift in Sources */ = {isa = PBXBuildFile; fileRef = E92A4E8A53AD0B054B033CD8 /* MuxManager/Terminal/TerminalCanvas.swift */; };
 		24FDBA8A838E9C2638EB7DD9 /* MuxManager/SSH/SSHTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 26C16E942F20B537A2F63FB0 /* MuxManager/SSH/SSHTransport.swift */; };
 		2563F14E540099597044C86B /* MuxManager/Storage/SecretStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 702A059999548F5EF90279DF /* MuxManager/Storage/SecretStore.swift */; };
@@ -27,6 +28,7 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		59F5E98E1B8C05CE194E7F8D /* CodexNotifications.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MuxManager/App/CodexNotifications.swift; sourceTree = "<group>"; };
 		10C1E7B3C8DB79DE56717CAD /* MuxManager/Storage/LibraryStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MuxManager/Storage/LibraryStore.swift; sourceTree = SOURCE_ROOT; };
 		26C16E942F20B537A2F63FB0 /* MuxManager/SSH/SSHTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MuxManager/SSH/SSHTransport.swift; sourceTree = SOURCE_ROOT; };
 		33B80364FCABEBA3EFC9E89E /* MuxManager/App/AppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MuxManager/App/AppModel.swift; sourceTree = SOURCE_ROOT; };
@@ -71,6 +73,7 @@
 			isa = PBXGroup;
 			children = (
 				33B80364FCABEBA3EFC9E89E /* MuxManager/App/AppModel.swift */,
+				59F5E98E1B8C05CE194E7F8D /* CodexNotifications.swift */,
 				DF87A96906872A74A10EBA1F /* MuxManager/App/HostWorkspace.swift */,
 				3E23B2CE744446E8918150F0 /* MuxManager/App/MuxManagerApp.swift */,
 				26C16E942F20B537A2F63FB0 /* MuxManager/SSH/SSHTransport.swift */,
@@ -174,6 +177,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				3A78D0155661CC53E2DA288C /* MuxManager/App/AppModel.swift in Sources */,
+				3EAB34D47333AABE7A63024C /* CodexNotifications.swift in Sources */,
 				26FD3F1DB784A0C6CED3381C /* MuxManager/App/HostWorkspace.swift in Sources */,
 				BE71BC8F59B9A40BCF955288 /* MuxManager/App/MuxManagerApp.swift in Sources */,
 				24FDBA8A838E9C2638EB7DD9 /* MuxManager/SSH/SSHTransport.swift in Sources */,

@@ -6,6 +6,9 @@ final class AppModel: ObservableObject {
     @Published private(set) var workspaces: [UUID: HostWorkspace] = [:]
     @Published var activeHostID: UUID?
     let library: LibraryStore
+    let notifications: CodexNotifications
+    @Published private(set) var notificationNavigationRevision = 0
+    private var notificationNavigationRequest = UUID()
     private var backgroundSession: BackgroundConnectionSession?
     private var transitionID = UUID()
     private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
@@ -17,10 +20,17 @@ final class AppModel: ObservableObject {
     private var foregroundResumeSession: BackgroundConnectionSession?
     init(library: LibraryStore) {
         self.library = library
+        notifications = CodexNotifications(library: library)
+        notifications.onEnabledChange = { [weak self] _ in
+            guard let self else { return }
+            for workspace in self.workspaces.values { self.configureNotifications(workspace) }
+        }
+        notifications.onOpen = { [weak self] target in self?.openNotification(target) }
         #if DEBUG
         if let scene = LibraryStore.screenshotScene, let profile = library.visibleProfiles.first {
             let workspace = HostWorkspace(profile: profile, library: library)
             workspace.configureScreenshot(scene: scene)
+            configureNotifications(workspace)
             workspaces[profile.id] = workspace
             activeHostID = profile.id
             if scene == "preview" {
@@ -40,17 +50,60 @@ final class AppModel: ObservableObject {
     var activeWorkspace: HostWorkspace? { activeHostID.flatMap { workspaces[$0] } }
 
     func open(_ profile: ConnectionProfile) {
+        cancelNotificationNavigation()
+        let workspace = workspace(for: profile)
+        activeHostID = profile.id
+        #if DEBUG
+        if let scene = LibraryStore.screenshotScene { workspace.configureScreenshot(scene: scene); return }
+        #endif
+        Task { await workspace.connect() }
+    }
+
+    private func workspace(for profile: ConnectionProfile) -> HostWorkspace {
         let workspace: HostWorkspace
         if let existing = workspaces[profile.id] { workspace = existing; workspace.profile = profile }
         else {
             workspace = HostWorkspace(profile: profile, library: library)
             workspaces[profile.id] = workspace
         }
-        activeHostID = profile.id
-        #if DEBUG
-        if let scene = LibraryStore.screenshotScene { workspace.configureScreenshot(scene: scene); return }
-        #endif
-        Task { await workspace.connect() }
+        configureNotifications(workspace)
+        return workspace
+    }
+    private func configureNotifications(_ workspace: HostWorkspace) {
+        workspace.configureAttention(enabled: notifications.enabled) { [weak self, weak workspace] pane, state in
+            guard let self, let workspace, self.library.visibleProfiles.contains(where: { $0.id == workspace.id }) else { return }
+            Task { await self.notifications.post(hostName: workspace.profile.name, pane: pane, state: state, hostID: workspace.id) }
+        }
+    }
+    func cancelNotificationNavigation() { notificationNavigationRequest = UUID() }
+
+    private func openNotification(_ target: CodexNotificationTarget) {
+        guard let profile = library.visibleProfiles.first(where: { $0.id == target.hostID }) else {
+            library.error = "The connection for this notification is no longer saved."; return
+        }
+        let request = UUID(); notificationNavigationRequest = request
+        let workspace = workspace(for: profile)
+        activeHostID = profile.id; notificationNavigationRevision += 1
+        Task { [weak self] in
+            let originalIntent = workspace.connectionIntent
+            let deadline = ContinuousClock.now.advanced(by: .seconds(30))
+            // A tap can arrive while SwiftUI is still delivering the foreground
+            // transition. Let connection validation/recovery finish first.
+            try? await Task.sleep(for: .milliseconds(100))
+            while UIApplication.shared.applicationState != .active || self?.foregroundResumeSession != nil || workspace.state == .disconnecting {
+                guard self?.notificationNavigationRequest == request, workspace.connectionIntent == originalIntent,
+                      ContinuousClock.now < deadline else { return }
+                try? await Task.sleep(for: .milliseconds(100))
+            }
+            guard self?.notificationNavigationRequest == request, workspace.connectionIntent == originalIntent else { return }
+            if workspace.canConnect { await workspace.connect() }
+            while workspace.state == .connecting || workspace.busy || workspace.sending {
+                guard self?.notificationNavigationRequest == request, ContinuousClock.now < deadline else { return }
+                try? await Task.sleep(for: .milliseconds(100))
+            }
+            guard let self, self.notificationNavigationRequest == request, workspace.isConnected else { return }
+            await workspace.openNotificationWindow(target, isCurrent: { [weak self] in self?.notificationNavigationRequest == request })
+        }
     }
     func suspend() {
         #if DEBUG
