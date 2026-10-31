@@ -17,6 +17,7 @@ public actor ControlChannel {
     private var active: Request?
     private var timeout: Task<Void, Never>?
     private var closed = false
+    public var isClosed: Bool { closed }
     private let timeoutNanoseconds: UInt64
 
     public init(timeoutNanoseconds: UInt64 = 15_000_000_000, writer: @escaping Writer, onEvent: @escaping @Sendable (ControlEvent) async -> Void) {

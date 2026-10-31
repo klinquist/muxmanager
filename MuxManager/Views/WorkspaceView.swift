@@ -125,8 +125,9 @@ struct WorkspaceView: View {
         .onChange(of: workspace.directInput) { _, direct in if direct { composerFocused = false } }
         .onChange(of: workspace.closedWindowRevision) { _, _ in returnToWindows() }
         .onChange(of: workspace.notificationFocusRevision) { _, _ in composerFocused = false; showLive() }
+        .onChange(of: workspace.connectionRecoveryRevision) { _, _ in composerFocused = false; showLive() }
         .onChange(of: workspace.state) { _, state in
-            if state == .disconnected || state == .disconnecting { returnToWindows() }
+            if !workspace.isAutoReconnecting && (state == .disconnected || state == .disconnecting) { returnToWindows() }
         }
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in keyboardVisible = true }
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in keyboardVisible = false }
@@ -177,8 +178,9 @@ struct WorkspaceView: View {
         HStack {
             Text(workspace.statusText).font(.caption).fixedSize(horizontal: false, vertical: true)
             Spacer()
-            if workspace.isEstablishingConnection {
+            if workspace.isEstablishingConnection || workspace.isAutoReconnecting {
                 ProgressView().controlSize(.small)
+                Button("Disconnect") { Task { await workspace.disconnect() } }.font(.caption.bold())
             } else {
                 Button("Reconnect") { Task { await workspace.connect() } }.font(.caption.bold()).disabled(!workspace.canConnect)
             }

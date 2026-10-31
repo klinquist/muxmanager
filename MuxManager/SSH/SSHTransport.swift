@@ -84,6 +84,9 @@ enum SSHKeys {
 @MainActor
 final class SSHTransport {
     var diagnostic: ((String) -> Void)?
+    var onDisconnect: (() -> Void)?
+    var isConnected: Bool { client?.isConnected == true }
+    private var connectionGeneration = UUID()
     private var client: SSHClient?
     private var jump: SSHClient?
     private var streamTask: Task<Void, Never>?
@@ -94,6 +97,7 @@ final class SSHTransport {
     func connect(profile: ConnectionProfile, library: LibraryStore,
                  onProgress: (String) -> Void,
                  onChallenge: @escaping @Sendable (HostKeyChallenge) -> Void) async throws {
+        let generation = UUID(); connectionGeneration = generation
         onProgress("Preparing SSH credentials…")
         try profile.validate(in: library.profiles)
         diagnostic?("Target \(profile.name): \(profile.username)@\(profile.hostname):\(profile.port); authentication=\(profile.authentication.rawValue)")
@@ -107,6 +111,7 @@ final class SSHTransport {
                 onProgress("Connecting to jump host \(bastion.name)…")
                 let gateway = try await SSHClient.connect(to: try self.settings(bastion, library: library, onChallenge: onChallenge))
                 jump = gateway
+                watch(gateway, generation: generation)
                 diagnostic?("Bastion authenticated; opening SSH forwarding to \(profile.hostname):\(profile.port)")
                 onProgress("Jump host \(bastion.name) connected. Connecting to \(profile.name)…")
                 client = try await gateway.jump(to: settings)
@@ -116,6 +121,7 @@ final class SSHTransport {
                 client = try await SSHClient.connect(to: settings)
             }
             diagnostic?("Target SSH authenticated")
+            if let client { watch(client, generation: generation) }
             onProgress("SSH connected. Finding tmux on \(profile.name)…")
             let found = try await execute("if command -v tmux >/dev/null 2>&1; then command -v tmux; elif [ -x /opt/homebrew/bin/tmux ]; then echo /opt/homebrew/bin/tmux; elif [ -x /usr/local/bin/tmux ]; then echo /usr/local/bin/tmux; elif [ -x /usr/local/homebrew/bin/tmux ]; then echo /usr/local/homebrew/bin/tmux; else exit 127; fi")
             guard let path = found.split(separator: "\n").last, !path.isEmpty else {
@@ -131,6 +137,32 @@ final class SSHTransport {
                 throw MuxError.message("This host needs tmux 3.2 or later. Found: \(version.trimmingCharacters(in: .whitespacesAndNewlines))")
             }
         } catch { diagnostic?("SSH/bootstrap failed: \(error.localizedDescription)"); await disconnect(); throw error }
+    }
+
+    private func watch(_ client: SSHClient, generation: UUID) {
+        client.onDisconnect { [weak self] in
+            Task { @MainActor in
+                guard let self, self.connectionGeneration == generation else { return }
+                self.onDisconnect?()
+            }
+        }
+    }
+
+    static func canRetry(_ error: Error) -> Bool {
+        if error is AuthenticationFailed || error is MuxError || error is RemoteCommandFailure { return false }
+        if let failure = error as? SSHClientError {
+            switch failure {
+            case .channelCreationFailed: return true
+            default: return false
+            }
+        }
+        if let failure = error as? CitadelError {
+            switch failure {
+            case .unauthorized, .invalidSignature, .invalidMac, .cryptographicError, .unsupported: return false
+            default: break
+            }
+        }
+        return true
     }
 
     /// Named fields only; never dump the full environment or read pane contents.
@@ -240,6 +272,7 @@ final class SSHTransport {
         streamTask?.cancel(); streamTask = nil; channel = nil
     }
     func disconnect() async {
+        connectionGeneration = UUID()
         await stopControl()
         if let client { try? await client.close() }
         if let jump { try? await jump.close() }

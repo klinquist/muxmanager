@@ -97,7 +97,7 @@ final class AppModel: ObservableObject {
             }
             guard self?.notificationNavigationRequest == request, workspace.connectionIntent == originalIntent else { return }
             if workspace.canConnect { await workspace.connect() }
-            while workspace.state == .connecting || workspace.busy || workspace.sending {
+            while workspace.state == .connecting || workspace.isEstablishingConnection || workspace.isAutoReconnecting || workspace.busy || workspace.sending {
                 guard self?.notificationNavigationRequest == request, ContinuousClock.now < deadline else { return }
                 try? await Task.sleep(for: .milliseconds(100))
             }

@@ -2,6 +2,13 @@
 
 Changes are listed by app version and build number, newest first.
 
+## 1.0 (12) — 2026-10-31
+
+- Automatically reconnect dropped SSH and tmux control connections with retries backing off to 30 seconds.
+- Restore the same session/window and unfinished draft, refresh Live, and keep terminal input disabled until recovery completes. Submitted commands and keystrokes are never replayed.
+- Keep Disconnect available during recovery. Explicit Disconnect cancels retries; authentication and host-verification failures pause for attention. Backgrounded apps retry when active again.
+- If the previous tmux session/window closed while disconnected, return to its list rather than creating or selecting another window.
+
 ## 1.0 (11) — 2026-10-31
 
 - Limit notification screen checks to Codex panes; stop checking generic Node processes after a screen fails to identify Codex.

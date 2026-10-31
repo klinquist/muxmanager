@@ -21,6 +21,17 @@ final class HostWorkspace: ObservableObject, Identifiable {
     @Published private(set) var selectedWindowID: String?
     @Published private(set) var closedWindowRevision = 0
     @Published private(set) var notificationFocusRevision = 0
+    @Published private(set) var connectionRecoveryRevision = 0
+    @Published private var reconnect = AutomaticReconnect()
+    var isAutoReconnecting: Bool { reconnect.recovering }
+    var canDisconnect: Bool { isConnected || state == .connecting || isAutoReconnecting }
+    private var reconnectTask: Task<Void, Never>?
+    private var reconnectEpoch = UUID()
+    private var connectionWork: Task<Void, Never>?
+    #if DEBUG
+    private var fixtureConnect: (() async throws -> ControlChannel)?
+    private var fixtureControl: ControlChannel?
+    #endif
     @Published private(set) var displayMode: DisplayMode = .smart
     @Published var conversation = false
     @Published private(set) var terminalMode = false
@@ -109,6 +120,7 @@ final class HostWorkspace: ObservableObject, Identifiable {
         drafts = library.readLocal([String: String].self, name: "drafts-\(id).json") ?? [:]
         lease = library.readLocal(ResizeLease.self, name: "resize-\(id).json")
         transport.diagnostic = { [weak self] message in self?.record("ssh", message) }
+        transport.onDisconnect = { [weak self] in self?.connectionLost("SSH connection closed.") }
     }
     #if DEBUG
     /// Deterministic sample data rendered by the production views, without SSH.
@@ -236,8 +248,9 @@ final class HostWorkspace: ObservableObject, Identifiable {
 
     var selectedWindow: RemoteWindow? { windows.first { $0.id == selectedWindowID } }
     var isConnected: Bool { state == .connected }
-    var isEstablishingConnection: Bool { connectionProgress != nil && (state == .connecting || isConnected) }
-    var shouldRetainInBackground: Bool { isConnected || state == .connecting || resumingFromBackground }
+    var isReadyForInput: Bool { isConnected && connectionSetupGeneration == nil && !isAutoReconnecting }
+    var isEstablishingConnection: Bool { connectionProgress != nil && (state == .connecting || isConnected || isAutoReconnecting) }
+    var shouldRetainInBackground: Bool { isConnected || state == .connecting || resumingFromBackground || isAutoReconnecting }
     var canConnect: Bool {
         switch state {
         case .disconnected, .failed: return true
@@ -304,8 +317,11 @@ final class HostWorkspace: ObservableObject, Identifiable {
 
     func connect(automatically: Bool = false) async {
         guard canConnect else { return }
+        if !automatically {
+            stopReconnectWorker(); reconnect.requested()
+            connectionIntent = UUID(); isBackgrounded = false
+        }
         stopAttentionMonitoring(resetPolling: true)
-        if !automatically { connectionIntent = UUID(); isBackgrounded = false }
         state = .connecting; error = nil; challenge = nil
         backgroundOutputPaused = false
         lastSessionLines = nil; lastWindowResult = nil; lastSessionFailure = nil; lastWindowFailure = nil
@@ -313,42 +329,120 @@ final class HostWorkspace: ObservableObject, Identifiable {
         let generation = UUID(); connectionGeneration = generation
         connectionSetupGeneration = generation
         reportConnectionProgress("Preparing connection to \(profile.name)…")
+        let previous = connectionWork
+        let task = Task { [weak self] in
+            // A cancelled handshake can finish late. Drain its transport cleanup
+            // before a replacement attempt can acquire the shared SSH transport.
+            await previous?.value
+            guard let self, self.connectionGeneration == generation else { return }
+            await self.performConnection(generation: generation)
+        }
+        connectionWork = task
+        await task.value
+        if connectionGeneration == generation { connectionWork = nil }
+    }
+
+    private func performConnection(generation: UUID) async {
+        var transportEstablished = false
         defer {
             if connectionSetupGeneration == generation { connectionSetupGeneration = nil }
             if connectionGeneration == generation { connectionProgress = nil }
         }
         do {
             await transport.disconnect(); control = nil
-            try await transport.connect(profile: profile, library: library, onProgress: { [weak self] message in
-                guard self?.connectionGeneration == generation else { return }
-                self?.reportConnectionProgress(message)
-            }) { [weak self] challenge in
-                Task { @MainActor in
-                    guard self?.connectionGeneration == generation else { return }
-                    self?.record("ssh", "Host verification required for \(challenge.endpoint); changed key=\(challenge.previousFingerprint != nil)")
-                    self?.challenge = challenge
-                }
-            }
+            try await establishTransport(generation: generation)
+            transportEstablished = true
             guard generation == connectionGeneration else { await transport.disconnect(); return }
-            reportConnectionProgress("Inspecting tmux server…")
-            await transport.collectEnvironmentDiagnostics()
-            guard generation == connectionGeneration else { return }
             state = .connected
             reportConnectionProgress("Loading tmux sessions…")
             try await discoverSessions()
-            if let session = sessions.first(where: { $0.id == (selectedSessionID ?? reconnectSessionID) }) ?? (sessions.count == 1 ? sessions.first : nil) {
+            if let session = sessions.first(where: { $0.id == (selectedSessionID ?? reconnectSessionID) }) ?? (sessions.count == 1 && reconnectSessionID == nil ? sessions.first : nil) {
                 try await attach(session.id)
-            } else if sessions.count > 1 {
-                record("selection", "Found \(sessions.count) sessions. Waiting for the user to choose a session; windows are not listed until then.")
             } else {
-                record("selection", "No sessions found on the default tmux server for this SSH user/environment")
+                let hadWindow = selectedWindowID != nil || reconnectWindowID != nil
+                selectedSessionID = nil; selectedWindowID = nil; windows = []
+                joinedCapture = ""; terminalCapture = ""; snapshotRevision += 1
+                if hadWindow { closedWindowRevision += 1 }
+                record("selection", "Choose an available tmux session; the previous session may have closed.")
             }
+            guard generation == connectionGeneration else { return }
+            let recovered = isAutoReconnecting
+            reconnect.connected()
+            if recovered { connectionRecoveryRevision += 1; record("connection", "Automatically reconnected") }
             connectionProgress = nil; connectionSetupGeneration = nil
             if isBackgrounded { await prepareForBackground(expectedIntent: connectionIntent) }
             if !isBackgrounded && !resumingFromBackground { startPolling() }
             startAttentionMonitoring()
         } catch {
-            if generation == connectionGeneration { state = .failed(error.localizedDescription) }
+            guard generation == connectionGeneration else { return }
+            state = .failed(error.localizedDescription)
+            let retryable = transportEstablished ? !(error is RemoteCommandFailure) : SSHTransport.canRetry(error)
+            reconnect.failed(retryable: retryable && challenge == nil)
+            if reconnect.needsAttention { record("connection", "Automatic retries paused: connection settings or host verification need attention") }
+            scheduleReconnect()
+        }
+    }
+
+    private func establishTransport(generation: UUID) async throws {
+        #if DEBUG
+        if let fixtureConnect { fixtureControl = try await fixtureConnect(); control = fixtureControl; return }
+        #endif
+        try await transport.connect(profile: profile, library: library, onProgress: { [weak self] message in
+            guard self?.connectionGeneration == generation else { return }
+            self?.reportConnectionProgress(message)
+        }) { [weak self] challenge in
+            Task { @MainActor in
+                guard self?.connectionGeneration == generation else { return }
+                self?.record("ssh", "Host verification required for \(challenge.endpoint); changed key=\(challenge.previousFingerprint != nil)")
+                self?.challenge = challenge
+            }
+        }
+        guard generation == connectionGeneration else { return }
+        reportConnectionProgress("Inspecting tmux server…")
+        await transport.collectEnvironmentDiagnostics()
+    }
+
+    private func stopReconnectWorker() {
+        reconnectEpoch = UUID()
+        // Do not cancel an in-flight SSH handshake or command response. Its
+        // generation guards drain it before the next connection attempt.
+        if connectionSetupGeneration == nil { reconnectTask?.cancel() }
+        reconnectTask = nil
+    }
+
+    private func connectionLost(_ message: String) {
+        guard isConnected else { return }
+        reconnectSessionID = selectedSessionID ?? reconnectSessionID
+        reconnectWindowID = selectedWindowID ?? reconnectWindowID
+        directInput = false; controlModifier = false
+        state = .failed(message); pollingGeneration = UUID()
+        stopAttentionMonitoring()
+        reconnect.lostConnection()
+        record("connection", "Connection lost; automatic recovery requested")
+        scheduleReconnect()
+    }
+
+    private func scheduleReconnect() {
+        guard isAutoReconnecting, !isBackgrounded, !resumingFromBackground,
+              reconnectTask == nil, challenge == nil else { return }
+        let epoch = UUID(); reconnectEpoch = epoch
+        let intent = connectionIntent
+        reconnectTask = Task { [weak self] in
+            while let self, self.reconnectEpoch == epoch, self.connectionIntent == intent,
+                  let delay = self.reconnect.nextDelay(isBackgrounded: self.isBackgrounded) {
+                self.connectionProgress = delay == 0 ? "Connection lost. Reconnecting…" : "Reconnecting in \(Int(delay)) seconds…"
+                self.record("connection", self.connectionProgress!)
+                do { try await Task.sleep(for: .seconds(delay)) } catch { break }
+                guard self.reconnectEpoch == epoch, self.connectionIntent == intent, !self.isBackgrounded else { break }
+                // An active connection attempt owns the transport until it drains.
+                await self.connectionWork?.value
+                guard self.reconnectEpoch == epoch, self.connectionIntent == intent, !self.isBackgrounded else { break }
+                await self.connect(automatically: true)
+            }
+            if let self, self.reconnectEpoch == epoch {
+                self.reconnectTask = nil
+                if self.connectionSetupGeneration == nil { self.connectionProgress = nil }
+            }
         }
     }
 
@@ -363,7 +457,9 @@ final class HostWorkspace: ObservableObject, Identifiable {
 
     func disconnect(automatically: Bool = false) async {
         // Explicit Disconnect also cancels a pending automatic foreground resume.
-        if !automatically { connectionIntent = UUID() }
+        stopReconnectWorker()
+        if !automatically { connectionIntent = UUID(); reconnect.stopped() }
+        else { reconnect.lostConnection() }
         guard state != .disconnecting, state != .disconnected else { return }
         record("connection", "Disconnect requested")
         reconnectSessionID = selectedSessionID; reconnectWindowID = selectedWindowID
@@ -378,6 +474,11 @@ final class HostWorkspace: ObservableObject, Identifiable {
         }
         await transport.disconnect(); control = nil
         backgroundOutputPaused = false
+        if automatically && isAutoReconnecting {
+            directInput = false; controlModifier = false; displayMode = .smart; fittedViewport = nil
+            state = .failed("Connection paused; reconnecting when active.")
+            return
+        }
         windows = []; sessions = []; selectedWindowID = nil; selectedSessionID = nil
         captureDiagnostics = "No terminal capture yet"; lastCaptureSignature = nil
         joinedCapture = ""; terminalCapture = ""; terminalLiveRow = 0; snapshotRevision += 1
@@ -387,6 +488,7 @@ final class HostWorkspace: ObservableObject, Identifiable {
 
     func pauseForBackground() {
         isBackgrounded = true
+        stopReconnectWorker()
         backgroundGeneration = UUID()
         pollingGeneration = UUID()
         draftSaveTask?.cancel(); persistDrafts()
@@ -398,6 +500,7 @@ final class HostWorkspace: ObservableObject, Identifiable {
     func unpauseAfterBackground() {
         isBackgrounded = false; attentionRuntimeAvailable = true
         startAttentionMonitoring()
+        scheduleReconnect()
     }
 
     func prepareForBackground(expectedIntent: UUID) async {
@@ -457,10 +560,11 @@ final class HostWorkspace: ObservableObject, Identifiable {
         isBackgrounded = false
         attentionRuntimeAvailable = true
         resumingFromBackground = true
-        defer { resumingFromBackground = false; startAttentionMonitoring() }
+        defer { resumingFromBackground = false; startAttentionMonitoring(); scheduleReconnect() }
         let intent = connectionIntent
         await backgroundPreparation?.task.value
         guard !isBackgrounded, connectionIntent == intent else { return }
+        guard !reconnect.needsAttention else { return }
         // no-output suppresses pane notifications while parked; don't rely on a
         // new output event to make the selected pane eligible for capture again.
         dirty = true
@@ -497,7 +601,7 @@ final class HostWorkspace: ObservableObject, Identifiable {
     }
 
     func selectSession(_ id: String) async {
-        guard !busy, !sending, isConnected else { return }; busy = true
+        guard !busy, !sending, isReadyForInput else { return }; busy = true
         record("selection", "Session selected: \(id)")
         defer { busy = false }
         do { try await restoreSize(); try await attach(id) }
@@ -513,17 +617,13 @@ final class HostWorkspace: ObservableObject, Identifiable {
         let previousWindowID = selectedSessionID == id ? selectedWindowID : (reconnectSessionID == id ? reconnectWindowID : nil)
         control = nil
         let generation = UUID(); attachmentGeneration = generation
-        let channel = try await transport.startControl(session: id, events: { [weak self] event in
-            Task { @MainActor in
-                guard self?.attachmentGeneration == generation else { return }
-                self?.handle(event)
-            }
-        }, closed: { [weak self] message in
-            Task { @MainActor in
-                guard let self, self.attachmentGeneration == generation, self.isConnected else { return }
-                self.state = .failed(message); self.pollTask?.cancel()
-            }
-        })
+        let channel: ControlChannel
+        #if DEBUG
+        if let fixtureControl { channel = fixtureControl }
+        else { channel = try await openControl(session: id, generation: generation) }
+        #else
+        channel = try await openControl(session: id, generation: generation)
+        #endif
         guard connection == connectionGeneration, isConnected else { await channel.close(); throw CancellationError() }
         control = channel
         selectedSessionID = id; selectedWindowID = nil; displayMode = .smart; fittedViewport = nil
@@ -535,14 +635,33 @@ final class HostWorkspace: ObservableObject, Identifiable {
         guard connection == connectionGeneration, isConnected else { throw CancellationError() }
         if connectionSetupGeneration != nil { reportConnectionProgress("Loading tmux windows…") }
         try await discoverWindows()
+        if let previousWindowID, !windows.contains(where: { $0.id == previousWindowID }) {
+            reconnectWindowID = nil
+            joinedCapture = ""; terminalCapture = ""; snapshotRevision += 1; closedWindowRevision += 1
+            return
+        }
         if let selected = windows.first(where: { $0.id == previousWindowID }) ?? windows.first {
             if connectionSetupGeneration != nil { reportConnectionProgress("Loading window \(selected.name)…") }
             try await chooseWindow(selected.id)
         }
     }
 
+    private func openControl(session id: String, generation: UUID) async throws -> ControlChannel {
+        try await transport.startControl(session: id, events: { [weak self] event in
+            Task { @MainActor in
+                guard self?.attachmentGeneration == generation else { return }
+                self?.handle(event)
+            }
+        }, closed: { [weak self] message in
+            Task { @MainActor in
+                guard let self, self.attachmentGeneration == generation, self.isConnected else { return }
+                self.connectionLost(message)
+            }
+        })
+    }
+
     func selectWindow(_ id: String) async {
-        guard isConnected, !busy, !sending else { return }
+        guard isReadyForInput, !busy, !sending else { return }
         if id == selectedWindowID { noteAttentionWindowViewed(); return }
         busy = true
         defer { busy = false }
@@ -629,7 +748,7 @@ final class HostWorkspace: ObservableObject, Identifiable {
     func setTerminalMode(_ enabled: Bool) {
         terminalMode = enabled
         if enabled { conversation = false }
-        directInput = enabled && isConnected
+        directInput = enabled && isReadyForInput
         controlModifier = false
     }
 
@@ -647,7 +766,7 @@ final class HostWorkspace: ObservableObject, Identifiable {
     }
 
     func sendDraft() async {
-        guard !sending, !busy, isConnected, let window = selectedWindow, !draft.isEmpty else { return }
+        guard !sending, !busy, isReadyForInput, let window = selectedWindow, !draft.isEmpty else { return }
         let pane = window.paneID
         inputRevision += 1
         let text = draft; sending = true
@@ -670,7 +789,7 @@ final class HostWorkspace: ObservableObject, Identifiable {
     }
 
     func sendKey(_ bytes: Data) async {
-        guard !bytes.isEmpty, !sending, !busy, isConnected, let pane = selectedWindow?.paneID else { return }
+        guard !bytes.isEmpty, !sending, !busy, isReadyForInput, let pane = selectedWindow?.paneID else { return }
         inputRevision += 1
         var input = bytes
         if applicationCursorKeys, bytes.count == 3, bytes.starts(with: [27, 91]),
@@ -703,7 +822,7 @@ final class HostWorkspace: ObservableObject, Identifiable {
     /// Keep it separate from key events so tmux can supply bracketed-paste
     /// markers, and never append an extra Enter or apply the Ctrl toggle.
     func pasteIntoTerminal(_ text: String, windowID: String, connectionIntent: UUID) async {
-        guard !text.isEmpty, !sending, !busy, isConnected, terminalMode,
+        guard !text.isEmpty, !sending, !busy, isReadyForInput, terminalMode,
               self.connectionIntent == connectionIntent,
               let window = selectedWindow, window.id == windowID else { return }
         inputRevision += 1; controlModifier = false
@@ -723,7 +842,7 @@ final class HostWorkspace: ObservableObject, Identifiable {
     }
 
     func completeInShell() async {
-        guard !sending, !busy, isConnected, let pane = selectedWindow?.paneID else { return }
+        guard !sending, !busy, isReadyForInput, let pane = selectedWindow?.paneID else { return }
         if terminalMode || directInput { await sendKey(Data([9])); return }
         let text = draft
         guard !text.contains(where: \.isNewline),
@@ -1097,7 +1216,7 @@ final class HostWorkspace: ObservableObject, Identifiable {
             }
         case .protocolError(let message):
             record("tmux", "Control mode ended: \(message)")
-            state = .failed(message.isEmpty ? "tmux disconnected." : message); pollTask?.cancel()
+            connectionLost(message.isEmpty ? "tmux disconnected." : message)
         case .response: break
         }
     }
@@ -1131,7 +1250,16 @@ final class HostWorkspace: ObservableObject, Identifiable {
                     if self.dirty { try await self.refreshSnapshot() }
                 } catch {
                     if Task.isCancelled { break }
-                    self.error = error.localizedDescription
+                    guard self.pollingGeneration == generation else { break }
+                    // Channel close/protocol callbacks own recovery (or normal
+                    // tmux-session exit); don't turn those into modal errors.
+                    if let control = self.control, await control.isClosed { break }
+                    if !self.transport.isConnected {
+                        #if DEBUG
+                        if self.fixtureConnect != nil { continue }
+                        #endif
+                        self.connectionLost(error.localizedDescription)
+                    } else { self.error = error.localizedDescription }
                 }
             }
         }
@@ -1150,8 +1278,10 @@ private actor AttentionFixturePeer {
     private(set) var reads: [String: Int] = [:]
     private(set) var commands: [String] = []
     private var additionalTargets = false
+    private var hiddenWindow: Int?
     func install(_ value: ControlChannel?) { channel = value }
     func screen(_ pane: String, _ value: String) { screens[pane] = value }
+    func hideWindow(_ index: Int) { hiddenWindow = index }
     func addPollingCandidates() {
         additionalTargets = true
         screens["%20"] = "Development server listening on port 3000"
@@ -1163,12 +1293,12 @@ private actor AttentionFixturePeer {
         commands.append(command)
         let lines: [String]
         if command.hasPrefix("list-windows -a") {
-            lines = (1...11).map { "\($0 == 11 ? "$2" : "$1")\t@\($0)\t\($0 == 11 ? "review-needed" : "project-\($0)")\t%\($0)\tcodex" }
+            lines = (1...11).filter { $0 != hiddenWindow }.map { "\($0 == 11 ? "$2" : "$1")\t@\($0)\t\($0 == 11 ? "review-needed" : "project-\($0)")\t%\($0)\tcodex" }
                 + ["$2\t@1\tlinked-project\t%1\tcodex"]
                 + (additionalTargets ? ["$2\t@20\tnode-server\t%20\tnode", "$2\t@21\tshell\t%21\tzsh", "$2\t@22\tcodex-node\t%22\tnode"] : [])
         } else if command.hasPrefix("list-sessions") { lines = ["$1\twork", "$2\tother"] }
         else if command.hasPrefix("list-windows") {
-            lines = (1...11).map { "@\($0)\t\($0 - 1)\tproject-\($0)\t%\($0)\t120\t36\tcodex" }
+            lines = (1...11).filter { $0 != hiddenWindow }.map { "@\($0)\t\($0 - 1)\tproject-\($0)\t%\($0)\t120\t36\tcodex" }
         } else if command.hasPrefix("capture-pane"), let pane = screens.keys.first(where: { command.hasSuffix(TmuxCommand.quote($0)) }) {
             reads[pane, default: 0] += 1
             lines = screens[pane]!.components(separatedBy: "\n")
@@ -1182,6 +1312,117 @@ private actor AttentionFixturePeer {
 }
 
 extension HostWorkspace {
+    func validateAutomaticReconnect() async {
+        guard LibraryStore.screenshotScene == "reconnect" else { return }
+        var checks: [String: Bool] = [:]
+        var attempts = 0, failures = 0, active = 0, maxActive = 0
+        var permanentFailure = false, slow = false, omitWindow = false
+        var peers: [(AttentionFixturePeer, ControlChannel)] = []
+        state = .disconnected; selectedSessionID = nil; selectedWindowID = nil
+        reconnectSessionID = "$1"; reconnectWindowID = "@3"
+        fixtureConnect = { [weak self] in
+            guard let self else { throw CancellationError() }
+            attempts += 1; active += 1; maxActive = max(maxActive, active)
+            defer { active -= 1 }
+            if slow { try await Task.sleep(for: .milliseconds(500)) }
+            if failures > 0 { failures -= 1; throw URLError(.networkConnectionLost) }
+            if permanentFailure {
+                self.challenge = HostKeyChallenge(endpoint: "fixture:22", publicKey: "fixture", fingerprint: "fixture", previousFingerprint: nil)
+                throw MuxError.message("Verify the host fingerprint to connect.")
+            }
+            let peer = AttentionFixturePeer()
+            if omitWindow { await peer.hideWindow(3) }
+            let generation = self.connectionGeneration
+            let channel = ControlChannel(writer: { try await peer.write($0) }, onEvent: { [weak self] event in
+                Task { @MainActor in
+                    guard self?.connectionGeneration == generation else { return }
+                    self?.handle(event)
+                }
+            })
+            await peer.install(channel)
+            await channel.receive(Data("%begin 0 0 0\n%end 0 0 0\n".utf8))
+            peers.append((peer, channel)); return channel
+        }
+        func wait(_ condition: () -> Bool) async -> Bool {
+            let end = ContinuousClock.now.advanced(by: .seconds(8))
+            while ContinuousClock.now < end {
+                if condition() { return true }
+                try? await Task.sleep(for: .milliseconds(50))
+            }
+            return false
+        }
+        await connect()
+        checks["initialConnectionUsesSavedSessionAndWindow"] = isConnected && selectedSessionID == "$1" && selectedWindowID == "@3"
+        draft = "unfinished command"; setTerminalMode(true)
+        let revision = inputRevision, recovered = connectionRecoveryRevision
+        failures = 1
+        transport.onDisconnect?()
+        handle(.protocolError("Duplicate close event"))
+        checks["lossRetainsWindowAndDraftAndDisablesDirectInput"] = selectedWindowID == "@3" && draft == "unfinished command" && !directInput && isAutoReconnecting
+        await sendKey(Data("late input".utf8))
+        checks["inputDuringLossIsNotQueued"] = inputRevision == revision
+        checks["transientFailureAutomaticallyRetries"] = await wait { isReadyForInput && attempts >= 3 }
+        checks["recoveryRestoresStableDestinationAndDraft"] = selectedSessionID == "$1" && selectedWindowID == "@3" && draft == "unfinished command"
+        checks["recoveryRefreshesLiveWithoutReenablingTyping"] = connectionRecoveryRevision > recovered && !directInput
+        checks["duplicateCloseEventsDoNotCreateConcurrentAttempts"] = maxActive == 1 && attempts == 3
+        permanentFailure = true
+        connectionLost("Fixture loss before verification")
+        _ = await wait { reconnect.needsAttention }
+        let pausedAttempts = attempts
+        try? await Task.sleep(for: .seconds(2))
+        checks["hostVerificationStopsAutomaticRetries"] = reconnect.needsAttention && challenge != nil && !isAutoReconnecting && attempts == pausedAttempts
+        permanentFailure = false
+        await connect()
+        failures = 10
+        let beforeFailure = attempts
+        connectionLost("Fixture offline")
+        _ = await wait { attempts > beforeFailure }
+        await disconnect()
+        let stoppedAttempts = attempts
+        try? await Task.sleep(for: .seconds(3))
+        checks["explicitDisconnectCancelsBackoffAndClearsWindows"] = state == .disconnected && attempts == stoppedAttempts && windows.isEmpty && !isAutoReconnecting
+        failures = 0
+        await connect()
+        slow = true
+        connectionLost("Fixture slow handshake")
+        _ = await wait { active == 1 }
+        await disconnect()
+        await connect()
+        checks["lateHandshakeCannotOverwriteNewConnection"] = isConnected && maxActive == 1
+        slow = false
+        pauseForBackground()
+        connectionLost("Fixture background loss")
+        let backgroundAttempts = attempts
+        try? await Task.sleep(for: .milliseconds(500))
+        checks["backgroundDoesNotStartRetryConnections"] = attempts == backgroundAttempts
+        await resumeFromBackground(forceReconnect: false)
+        checks["foregroundAutomaticallyRestoresDroppedConnection"] = isConnected && selectedWindowID == "@3"
+        omitWindow = true
+        let closed = closedWindowRevision
+        connectionLost("Fixture closed window while offline")
+        _ = await wait { isReadyForInput }
+        checks["missingWindowReturnsToListWithoutSelectingAnother"] = selectedWindowID == nil && closedWindowRevision > closed
+        await disconnect()
+        failures = 1
+        let initialAttempts = attempts
+        await connect()
+        try? await Task.sleep(for: .seconds(2))
+        checks["failedInitialLoginDoesNotRetryUnattended"] = attempts == initialAttempts + 1 && !isAutoReconnecting
+        var commands: [String] = []
+        for (peer, channel) in peers {
+            commands += await peer.commands
+            await channel.close(); await peer.install(nil)
+        }
+        checks["recoveryNeverReplaysInputOrCreatesTmuxWindows"] = commands.allSatisfy {
+            ["list-windows", "list-sessions", "capture-pane", "display-message", "refresh-client"].contains(where: $0.hasPrefix)
+        }
+        await disconnect(); fixtureConnect = nil; fixtureControl = nil
+        let report: [String: Any] = ["checks": checks, "passed": checks.values.allSatisfy { $0 }, "attempts": attempts, "maxConcurrentAttempts": maxActive]
+        if let data = try? JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys]) {
+            try? data.write(to: FileManager.default.temporaryDirectory.appendingPathComponent("mux-reconnect-report.json"))
+        }
+    }
+
     func validateAttentionMonitoring() async {
         guard LibraryStore.screenshotScene == "attention" else { return }
         var checks: [String: Bool] = [:]

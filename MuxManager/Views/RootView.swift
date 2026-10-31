@@ -137,6 +137,9 @@ struct RootView: View {
                     showNotificationSettings = true
                     await workspace.validateAttentionMonitoring()
                 }
+                if scene == "reconnect", let workspace = model.activeWorkspace {
+                    await workspace.validateAutomaticReconnect()
+                }
                 if scene == "links", let workspace = model.activeWorkspace {
                     try? await Task.sleep(for: .seconds(2))
                     await WebLinkValidation.run(workspace: workspace)
@@ -312,6 +315,7 @@ private struct HostConnectionControl: View {
     @ObservedObject var workspace: HostWorkspace
     let connect: () -> Void
     private var label: String {
+        if workspace.canDisconnect { return "Disconnect" }
         switch workspace.state {
         case .connected: return "Disconnect"
         case .connecting: return "Connecting…"
@@ -321,7 +325,7 @@ private struct HostConnectionControl: View {
     }
     var body: some View {
         Button {
-            if workspace.isConnected { Task { await workspace.disconnect() } }
+            if workspace.canDisconnect { Task { await workspace.disconnect() } }
             else { connect() }
         } label: {
             HStack(spacing: 5) {
@@ -330,7 +334,7 @@ private struct HostConnectionControl: View {
             }
         }
         .font(.caption.weight(.medium)).buttonStyle(.borderless)
-        .disabled(!workspace.isConnected && !workspace.canConnect)
+        .disabled(!workspace.canDisconnect && !workspace.canConnect)
         .accessibilityLabel("\(label) \(workspace.profile.name)")
     }
 }
