@@ -188,6 +188,9 @@ final class HostWorkspace: ObservableObject, Identifiable {
         if scene.hasPrefix("history") {
             joinedCapture = (1...2036).map { String(format: "\u{1b}[32mROW %04d\u{1b}[0m — retained terminal history for scrolling validation", $0) }.joined(separator: "\n")
         }
+        if scene == "links" {
+            joinedCapture = "\u{1b}[32m• Read the documentation.\u{1b}[0m\n\n🙂 https://example.com/docs?a=1&b=2#part\n\nOpen http://localhost:3000/test.\n\nMore details on a separate line."
+        }
         let screen = scene == "original" ? """
         \u{1b}[1;38;5;79mPROJECT TASKS\u{1b}[0m  /workspace/api
 

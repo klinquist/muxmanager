@@ -18,6 +18,7 @@ Its **Smart** view wraps terminal text to your screen while preserving colors an
 - Connect directly or through a saved bastion, with password authentication or generated/imported SSH keys.
 - Browse, create, and rename tmux sessions and windows using a native sidebar.
 - Read colored output, zoom text, scroll history, and hide the keyboard when you need more room.
+- Tap web links in terminal output to open them in your default browser, including links wrapped across terminal rows.
 - Compose commands in a native input box or use direct keys. Best-effort zsh/bash autocomplete returns readable completions to the input box without installing a remote helper.
 - Keep saved connections and key metadata in sync automatically using private CloudKit, with credentials in iCloud Keychain.
 
@@ -60,6 +61,7 @@ Every tmux invocation explicitly enables UTF-8 output with `-u`. Non-interactive
 | **Tab completion** | At a recognizable empty zsh/bash prompt, forwards a single-line draft and Tab without Enter, reads the completed line, clears the temporary remote input, and returns the text to the native composer while preserving keyboard focus. No host installation. |
 | **Terminal** | Hides the composer and sends each key immediately to the remote window. Esc, Tab, Shift-Tab, arrows, Ctrl, Ctrl-C, and Enter are available above the keyboard; Tab uses the terminal’s native completion. Works with Smart, Original, and Fit device. |
 | **Paste** (clipboard button) | Pastes text directly into the selected terminal, including multiline text. Hardware Command-V is supported while the terminal has keyboard focus. Paste uses tmux’s bracketed-paste handling, without appending an extra Enter; programs without bracketed-paste support interpret pasted newlines themselves. |
+| **Web links** | Tap an HTTP/HTTPS link in Smart, Conversation, Original, or Fit to open it through the system browser. Long-press or double-tap to select text; an active selection takes priority in the terminal grid. |
 
 Pinch to change text size, or use the text-size menu. **Live**, below the reading area, aligns the latest line with the bottom of the visible viewport after layout, including keyboard and font changes. Scrolling pauses automatic following. The keyboard-down button hides the keyboard while keeping the selected input mode. In Compose, tap the message field to reopen it. In Terminal, tap the live output or the keyboard button; when reading or selecting text, use the keyboard button to resume direct typing. Switching back to Compose restores your unfinished draft. Closing the selected remote window returns to the window list, including when the final window/session exits.
 

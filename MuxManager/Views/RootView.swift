@@ -137,6 +137,10 @@ struct RootView: View {
                     showNotificationSettings = true
                     await workspace.validateAttentionMonitoring()
                 }
+                if scene == "links", let workspace = model.activeWorkspace {
+                    try? await Task.sleep(for: .seconds(2))
+                    await WebLinkValidation.run(workspace: workspace)
+                }
             }
             #endif
         }

@@ -3,6 +3,14 @@ import UIKit
 import SwiftTerm
 import MuxCore
 
+@MainActor
+private enum TerminalWebBrowser {
+    static func open(_ url: URL) {
+        guard TerminalWebLinks.isWebURL(url) else { return }
+        UIApplication.shared.open(url)
+    }
+}
+
 /// All emulator sizing is local. This type never calls SSH window-change or tmux resize.
 struct TerminalCanvas: UIViewRepresentable {
     @ObservedObject var workspace: HostWorkspace
@@ -41,6 +49,7 @@ struct TerminalCanvas: UIViewRepresentable {
         if context.coordinator.revision != workspace.snapshotRevision &&
             (shouldFollow || dimensionsChanged || context.coordinator.revision < 0) {
             view.applySnapshot(workspace.terminalCapture)
+            view.terminal.webLinks = TerminalWebLinks.find(in: TerminalCaptureStyle.parse(workspace.joinedCapture).text)
             context.coordinator.revision = workspace.snapshotRevision
         }
         if shouldFollow { view.followLive = true; view.showLive() }
@@ -69,14 +78,66 @@ struct TerminalCanvas: UIViewRepresentable {
         func scrolled(source: TerminalView, position: Double) {}
         func rangeChanged(source: TerminalView, startY: Int, endY: Int) {}
         func requestOpenLink(source: TerminalView, link: String, params: [String: String]) {
-            guard let url = URL(string: link), ["https", "http"].contains(url.scheme?.lowercased() ?? "") else { return }
-            Task { @MainActor in UIApplication.shared.open(url) }
+            guard let url = URL(string: link) else { return }
+            Task { @MainActor in TerminalWebBrowser.open(url) }
         }
         // Remote OSC clipboard reads/writes retain SwiftTerm's deny-by-default behavior.
     }
 }
 
 final class PinnedTerminalView: TerminalView {
+    var webLinks: [TerminalWebLink] = []
+    var onOpenWebURL: (URL) -> Void = { TerminalWebBrowser.open($0) }
+    private var webLinkGestureDelegate: TerminalWebLinkGestureDelegate?
+
+    func configureWebLinkTaps() {
+        guard webLinkGestureDelegate == nil else { return }
+        let delegate = TerminalWebLinkGestureDelegate(terminal: self)
+        webLinkGestureDelegate = delegate
+        let tap = UITapGestureRecognizer(target: self, action: #selector(tappedWebLink(_:)))
+        tap.delegate = delegate
+        for recognizer in gestureRecognizers ?? [] {
+            guard let existing = recognizer as? UITapGestureRecognizer else { continue }
+            if existing.numberOfTapsRequired == 1 { existing.require(toFail: tap) }
+            else { tap.require(toFail: existing) }
+        }
+        addGestureRecognizer(tap)
+    }
+
+    func webURL(at point: CGPoint) -> URL? {
+        guard !webLinks.isEmpty, point.x >= 0, point.y >= 0 else { return nil }
+        let scale = window?.screen.scale ?? 2
+        let width = (("W" as NSString).size(withAttributes: [.font: font]).width * scale).rounded() / scale
+        let height = ceil(font.ascender - font.descender + font.leading)
+        guard width > 0, height > 0 else { return nil }
+        let row = Int(point.y / height), column = Int(point.x / width)
+        let model = getTerminal()
+        guard column < model.cols, model.getScrollInvariantLine(row: row) != nil else { return nil }
+        var rendered = "", tappedOffset: Int?
+        let radius = max(2, (webLinks.map { $0.text.utf16.count }.max() ?? 0) / max(1, model.cols) + 2)
+        for index in max(0, row - radius)...(row + radius) {
+            guard let line = model.getScrollInvariantLine(row: index) else { continue }
+            var previousCellOffset = rendered.utf16.count
+            for col in 0..<min(model.cols, line.count) {
+                let continuation = line.getWidth(index: col) == 0
+                if index == row, col == column { tappedOffset = continuation ? previousCellOffset : rendered.utf16.count }
+                if continuation { continue }
+                previousCellOffset = rendered.utf16.count
+                let character = model.getCharacter(for: line[col])
+                rendered.append(character == "\0" ? " " : character)
+            }
+        }
+        guard let tappedOffset else { return nil }
+        return TerminalWebLinks.url(in: rendered, atUTF16Offset: tappedOffset, links: webLinks)
+    }
+
+    @discardableResult func openWebLink(at point: CGPoint) -> Bool {
+        guard !hasActiveSelection, let url = webURL(at: point) else { return false }
+        onOpenWebURL(url); return true
+    }
+    @objc private func tappedWebLink(_ gesture: UITapGestureRecognizer) {
+        if gesture.state == .ended { openWebLink(at: gesture.location(in: self)) }
+    }
     var pinnedColumns = 80
     var pinnedRows = 24
     var pasteEnabled = false
@@ -146,6 +207,15 @@ final class PinnedTerminalView: TerminalView {
     }
 }
 
+private final class TerminalWebLinkGestureDelegate: NSObject, UIGestureRecognizerDelegate {
+    weak var terminal: PinnedTerminalView?
+    init(terminal: PinnedTerminalView) { self.terminal = terminal }
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+        guard let terminal, !terminal.hasActiveSelection else { return false }
+        return terminal.webURL(at: touch.location(in: terminal)) != nil
+    }
+}
+
 final class TerminalContainer: UIView {
     let horizontal = HorizontalTerminalScrollView()
     let terminal = PinnedTerminalView(frame: .zero)
@@ -166,6 +236,7 @@ final class TerminalContainer: UIView {
         terminal.backgroundColor = backgroundColor
         terminal.changeScrollback(2200)
         terminal.keyboardEnabled = false
+        terminal.configureWebLinkTaps()
         addSubview(horizontal); horizontal.addSubview(terminal)
         horizontal.isSelectingText = { [weak terminal] in terminal?.hasActiveSelection == true }
         terminal.onSelection = { [weak self] in
@@ -278,6 +349,7 @@ struct StyledTerminalLabel: UIViewRepresentable {
         view.delegate = context.coordinator
         view.isEditable = false; view.isSelectable = true; view.isScrollEnabled = false
         view.backgroundColor = .clear; view.textContainerInset = .zero
+        view.linkTextAttributes = [.foregroundColor: UIColor.systemMint, .underlineStyle: NSUnderlineStyle.single.rawValue]
         view.textContainer.lineFragmentPadding = 0
         view.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         return view
@@ -296,9 +368,17 @@ struct StyledTerminalLabel: UIViewRepresentable {
         view.textContainer.lineBreakMode = wraps ? .byWordWrapping : .byClipping
     }
     final class Coordinator: NSObject, UITextViewDelegate {
+        var onOpenURL: (URL) -> Void = { TerminalWebBrowser.open($0) }
         var onSelection: () -> Void = {}
         var updating = false
         var selectionResetToken = -1
+        func openWebURL(_ url: URL) {
+            if TerminalWebLinks.isWebURL(url) { onOpenURL(url) }
+        }
+        func textView(_ textView: UITextView, primaryActionFor textItem: UITextItem, defaultAction: UIAction) -> UIAction? {
+            guard case .link(let url) = textItem.content, TerminalWebLinks.isWebURL(url) else { return nil }
+            return UIAction(title: "Open in Browser") { [weak self] _ in self?.openWebURL(url) }
+        }
         func textViewDidChangeSelection(_ textView: UITextView) {
             guard !updating, textView.selectedRange.length > 0 else { return }
             onSelection()
@@ -330,6 +410,7 @@ struct StyledTerminalLabel: UIViewRepresentable {
             if style.strikethrough { attributes[.strikethroughStyle] = NSUnderlineStyle.single.rawValue }
             result.append(NSAttributedString(string: run.text, attributes: attributes))
         }
+        for link in TerminalWebLinks.find(in: result.string) { result.addAttribute(.link, value: link.url, range: link.range) }
         return result
     }
     private func color(_ value: TerminalTextColor?, bright: Bool) -> UIColor? {
@@ -514,6 +595,81 @@ final class KeyInputView: UIView, UIKeyInput {
 }
 
 #if DEBUG
+/// Isolated native-view probe; URLs are recorded instead of opening a browser.
+@MainActor
+enum WebLinkValidation {
+    static func run(workspace: HostWorkspace) async {
+        guard LibraryStore.screenshotScene == "links" else { return }
+        func views() -> [UIView] {
+            func flatten(_ view: UIView) -> [UIView] { [view] + view.subviews.flatMap(flatten) }
+            return UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.flatMap(\.windows).flatMap(flatten)
+        }
+        func pause() async { try? await Task.sleep(for: .milliseconds(400)) }
+        var checks: [String: Bool] = [:]
+        for conversation in [false, true] {
+            workspace.conversation = conversation
+            await pause()
+            let prefix = conversation ? "conversation" : "smart"
+            let labels = views().compactMap { $0 as? UITextView }.filter { !$0.isEditable }
+            let links = labels.flatMap { label -> [URL] in
+                var urls: [URL] = []
+                label.attributedText.enumerateAttribute(.link, in: NSRange(location: 0, length: label.attributedText.length)) { value, _, _ in
+                    if let url = value as? URL { urls.append(url) }
+                }
+                return urls
+            }
+            checks[prefix + "WebLinks"] = Set(links.map(\.absoluteString)) == ["https://example.com/docs?a=1&b=2#part", "http://localhost:3000/test"]
+            if let label = labels.first(where: { $0.text.contains("https://example.com") }),
+               let coordinator = label.delegate as? StyledTerminalLabel.Coordinator {
+                var opened: [URL] = []
+                coordinator.onOpenURL = { opened.append($0) }
+                coordinator.openWebURL(URL(string: "https://example.com/docs?a=1&b=2#part")!)
+                coordinator.openWebURL(URL(string: "file:///etc/passwd")!)
+                checks[prefix + "BrowserRouting"] = opened.map(\.absoluteString) == ["https://example.com/docs?a=1&b=2#part"]
+                let original = label.text ?? ""
+                _ = label.becomeFirstResponder()
+                label.selectedRange = NSRange(location: 0, length: (original as NSString).length)
+                label.copy(nil)
+                checks[prefix + "CopyUnchanged"] = UIPasteboard.general.string == original
+                label.selectedRange = NSRange(location: 0, length: 0)
+                label.resignFirstResponder()
+            }
+        }
+        workspace.conversation = false
+        for mode in [DisplayMode.original, .fit] {
+            workspace.configureScreenshot(scene: mode == .fit ? "fit" : "copy-original")
+            await pause()
+            let prefix = mode == .original ? "original" : "fit"
+            guard let container = views().compactMap({ $0 as? TerminalContainer }).first else {
+                checks[prefix + "TerminalExists"] = false; continue
+            }
+            let terminal = container.terminal
+            let link = "https://example.com/very/long/path?a=1&b=2#section"
+            let capture = "🙂 " + link + "\r\nordinary text\r\nlast line"
+            terminal.pinnedColumns = 30; terminal.pinnedRows = 10
+            terminal.resize(cols: 30, rows: 10)
+            terminal.feed(text: "\u{1b}c" + capture)
+            terminal.webLinks = TerminalWebLinks.find(in: capture)
+            await pause()
+            var opened: [URL] = []
+            terminal.onOpenWebURL = { opened.append($0) }
+            let scale = terminal.window?.screen.scale ?? 2
+            let width = (("W" as NSString).size(withAttributes: [.font: terminal.font]).width * scale).rounded() / scale
+            let height = ceil(terminal.font.ascender - terminal.font.descender + terminal.font.leading)
+            let inputRevision = workspace.inputRevision
+            checks[prefix + "WrappedLink"] = terminal.openWebLink(at: CGPoint(x: 3.5 * width, y: 1.5 * height)) && opened.map(\.absoluteString) == [link]
+            checks[prefix + "NonLinkIgnored"] = !terminal.openWebLink(at: CGPoint(x: 2.5 * width, y: 2.5 * height)) && opened.count == 1
+            terminal.setSelectionRange(start: Position(col: 0, row: 0), end: Position(col: 5, row: 2))
+            checks[prefix + "SelectionWins"] = !terminal.openWebLink(at: CGPoint(x: 6.5 * width, y: 0.5 * height)) && opened.count == 1
+            checks[prefix + "NoRemoteInput"] = workspace.inputRevision == inputRevision
+        }
+        let result: [String: Any] = ["checks": checks, "passed": checks.values.allSatisfy { $0 }]
+        if let data = try? JSONSerialization.data(withJSONObject: result, options: [.prettyPrinted, .sortedKeys]) {
+            try? data.write(to: FileManager.default.temporaryDirectory.appendingPathComponent("mux-links-report.json"))
+        }
+    }
+}
+
 /// Native scroll callback regression check using isolated 2,036-row fixtures.
 @MainActor
 enum HistoryScrollValidation {
