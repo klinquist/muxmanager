@@ -336,6 +336,58 @@ final class HorizontalTerminalScrollView: UIScrollView {
     }
 }
 
+/// Handle short link taps explicitly inside the surrounding reading scroller.
+final class TerminalLinkTextView: UITextView, UIGestureRecognizerDelegate {
+    var onOpenWebURL: (URL) -> Void = { TerminalWebBrowser.open($0) }
+    private var webLinkTap: UITapGestureRecognizer?
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        guard window != nil else { return }
+        let tap: UITapGestureRecognizer
+        if let webLinkTap { tap = webLinkTap }
+        else {
+            tap = UITapGestureRecognizer(target: self, action: #selector(tappedWebLink(_:)))
+            tap.delegate = self; webLinkTap = tap; addGestureRecognizer(tap)
+        }
+        // UIKit configures its text interactions after the selectable/editable
+        // flags are set. Establish precedence once those recognizers exist.
+        for recognizer in gestureRecognizers ?? [] {
+            guard recognizer !== tap, let existing = recognizer as? UITapGestureRecognizer else { continue }
+            if existing.numberOfTapsRequired == 1 { existing.require(toFail: tap) }
+            else { tap.require(toFail: existing) }
+        }
+    }
+
+    /// Use text-input geometry so wrapping, Unicode, insets and scrolling all
+    /// share UIKit's layout. A nearest caret alone also matches blank space;
+    /// require the touch to be inside an actual rectangle belonging to the URL.
+    func webURL(at point: CGPoint) -> URL? {
+        guard bounds.contains(point), let position = closestPosition(to: point) else { return nil }
+        let offset = offset(from: beginningOfDocument, to: position)
+        for index in [offset, offset - 1] where index >= 0 && index < attributedText.length {
+            var range = NSRange()
+            guard let url = attributedText.attribute(.link, at: index, effectiveRange: &range) as? URL,
+                  TerminalWebLinks.isWebURL(url),
+                  let start = self.position(from: beginningOfDocument, offset: range.location),
+                  let end = self.position(from: start, offset: range.length),
+                  let textRange = textRange(from: start, to: end),
+                  selectionRects(for: textRange).contains(where: { !$0.rect.isEmpty && $0.rect.contains(point) }) else { continue }
+            return url
+        }
+        return nil
+    }
+    @discardableResult func openWebLink(at point: CGPoint) -> Bool {
+        guard selectedRange.length == 0, let url = webURL(at: point) else { return false }
+        onOpenWebURL(url); return true
+    }
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+        selectedRange.length == 0 && webURL(at: touch.location(in: self)) != nil
+    }
+    @objc private func tappedWebLink(_ gesture: UITapGestureRecognizer) {
+        if gesture.state == .ended { openWebLink(at: gesture.location(in: self)) }
+    }
+}
+
 /// UIKit attributed text preserves per-run backgrounds as well as foreground colors.
 struct StyledTerminalLabel: UIViewRepresentable {
     let text: StyledTerminalText
@@ -345,7 +397,8 @@ struct StyledTerminalLabel: UIViewRepresentable {
     var onSelection: () -> Void = {}
     func makeCoordinator() -> Coordinator { Coordinator() }
     func makeUIView(context: Context) -> UITextView {
-        let view = UITextView()
+        let view = TerminalLinkTextView(frame: .zero, textContainer: nil)
+        view.onOpenWebURL = { [weak coordinator = context.coordinator] in coordinator?.openWebURL($0) }
         view.delegate = context.coordinator
         view.isEditable = false; view.isSelectable = true; view.isScrollEnabled = false
         view.backgroundColor = .clear; view.textContainerInset = .zero
@@ -626,6 +679,28 @@ enum WebLinkValidation {
                 coordinator.openWebURL(URL(string: "https://example.com/docs?a=1&b=2#part")!)
                 coordinator.openWebURL(URL(string: "file:///etc/passwd")!)
                 checks[prefix + "BrowserRouting"] = opened.map(\.absoluteString) == ["https://example.com/docs?a=1&b=2#part"]
+                if let label = label as? TerminalLinkTextView {
+                    opened = []
+                    let url = "https://example.com/docs?a=1&b=2#part"
+                    let range = (label.text as NSString).range(of: url)
+                    if let start = label.position(from: label.beginningOfDocument, offset: range.location),
+                       let end = label.position(from: start, offset: range.length),
+                       let textRange = label.textRange(from: start, to: end) {
+                        let rects = label.selectionRects(for: textRange).map(\.rect).filter { !$0.isEmpty }
+                        checks[prefix + "LinkGeometryExists"] = !rects.isEmpty
+                        checks[prefix + "LinkTapHitTesting"] = !rects.isEmpty && rects.allSatisfy {
+                            label.openWebLink(at: CGPoint(x: $0.midX, y: $0.midY))
+                        } && opened.count == rects.count && opened.allSatisfy { $0.absoluteString == url }
+                        let count = opened.count
+                        checks[prefix + "BlankSpaceIgnored"] = !label.openWebLink(at: CGPoint(x: label.bounds.midX, y: label.bounds.maxY - 1)) && opened.count == count
+                        checks[prefix + "OutsideBoundsIgnored"] = !label.openWebLink(at: CGPoint(x: -1, y: -1))
+                        label.selectedRange = NSRange(location: 0, length: 2)
+                        checks[prefix + "SelectionWins"] = rects.first.map {
+                            !label.openWebLink(at: CGPoint(x: $0.midX, y: $0.midY)) && opened.count == count
+                        } ?? false
+                        label.selectedRange = NSRange(location: 0, length: 0)
+                    } else { checks[prefix + "LinkGeometryExists"] = false }
+                } else { checks[prefix + "ExplicitLinkTapViewExists"] = false }
                 let original = label.text ?? ""
                 _ = label.becomeFirstResponder()
                 label.selectedRange = NSRange(location: 0, length: (original as NSString).length)

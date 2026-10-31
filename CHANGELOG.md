@@ -2,6 +2,12 @@
 
 Changes are listed by app version and build number, newest first.
 
+## 1.0 (10) — 2026-10-31
+
+- Added explicit short-tap handling for web links in Smart and Conversation, with hit testing against the text's rendered link rectangles.
+- Disable the terminal keyboard tap gesture in Compose so it does not compete with text interactions.
+- Preserve long-press/double-tap selection; blank space and active selections do not open links.
+
 ## 1.0 (9) — 2026-10-31
 
 - Added tappable HTTP/HTTPS links in Smart, Conversation, Original, and Fit views, opening through the system's default browser.

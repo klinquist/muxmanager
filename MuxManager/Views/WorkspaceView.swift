@@ -36,7 +36,7 @@ struct WorkspaceView: View {
                         // Selection/scrolling pauses Live. Use the keyboard
                         // button to leave that state without stealing Copy focus.
                         if workspace.terminalMode, !workspace.directInput, follow { activateTerminalKeyboard() }
-                    })
+                    }, including: workspace.terminalMode ? .all : .subviews)
                     .simultaneousGesture(MagnificationGesture().onChanged { scale in
                         if magnificationStart == nil { magnificationStart = workspace.fontSize }
                         workspace.fontSize = min(32, max(8, (magnificationStart ?? 14) * scale))

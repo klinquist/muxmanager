@@ -76,6 +76,12 @@
 - Browser routing uses `UIApplication.shared.open`; no embedded browser or new dependency is added. The native grid tap waits for double/triple-tap selection and admits only detected URL cells. Candidates track the displayed capture while reading history. The probe records URL callbacks instead of launching another app and does not emulate finger gestures or a live SSH session.
 - Device checks: tap a short and wrapped URL in Smart, Conversation, Original, and Fit with the keyboard shown/hidden and while reading history. Verify the configured default browser opens the full address. Long-press/double-tap, select/copy multiple lines including URLs, pan both axes, and interact with a TUI using mouse reporting; non-link touches must keep their existing behavior.
 
+## Smart/Compose link-tap follow-up checked 2026-10-31
+
+- Added an explicit URL-only tap recognizer to the native Smart/Conversation text view. It uses UITextInput positions and selection rectangles to match visible link text, including wrapped lines, without treating nearby blank space as a link. UIKit double/triple-tap recognizers retain selection priority, and an active selection suppresses opening. Compose excludes the surrounding terminal-keyboard tap gesture while preserving subview gestures.
+- All 52 MuxCore tests pass and the full Debug simulator app builds. The expanded `links` fixture passes 24 checks per device on iPhone 17 Pro Max and iPad Pro 13-inch (M5), iOS 27.0. New checks exercise rendered URL rectangles through the short-tap handler, blank/out-of-bounds touches, and selection priority in Smart/Conversation, in addition to existing browser-routing, Copy, and Original/Fit checks. Reports are under ignored `output/validation/2026-10-31/web-link-tap-fix/`.
+- These probes call the native hit-testing/open handler with measured view coordinates and record browser callbacks. Physical gesture dispatch and the external browser transition remain device checks: Device Hub computer-use access timed out during this follow-up. Build 9's earlier attribute/callback tests did not cover the full tap path.
+
 ## Remaining device checks
 
 Run on an iPhone and iPad, including landscape, a hardware keyboard, software keyboard, and iPad split view.
