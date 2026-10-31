@@ -2,6 +2,12 @@
 
 Changes are listed by app version and build number, newest first.
 
+## 1.0 (13) — 2026-10-31
+
+- Show an immediate spinner and Sending status when Compose submits, including on slow connections. Reserve the send before scheduling SSH work to reject duplicate taps or Return presses.
+- Keep the draft until acknowledgement; failed sends retain it with an unconfirmed-send warning and no automatic replay.
+- Enable Compose spelling checks by default. The ABC toggle remembers the device's preference, preserves the draft/caret, and leaves terminal input literal. Automatic text replacement stays off.
+
 ## 1.0 (12) — 2026-10-31
 
 - Automatically reconnect dropped SSH and tmux control connections with retries backing off to 30 seconds.

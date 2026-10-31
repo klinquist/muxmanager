@@ -42,6 +42,7 @@ final class HostWorkspace: ObservableObject, Identifiable {
     @Published var challenge: HostKeyChallenge?
     @Published private(set) var busy = false
     @Published private(set) var sending = false
+    @Published private(set) var isSubmittingDraft = false
     @Published private(set) var joinedCapture = ""
     @Published private(set) var terminalCapture = ""
     @Published private(set) var snapshotRevision = 0
@@ -766,26 +767,37 @@ final class HostWorkspace: ObservableObject, Identifiable {
     }
 
     func sendDraft() async {
-        guard !sending, !busy, isReadyForInput, let window = selectedWindow, !draft.isEmpty else { return }
+        await submitDraft()?.value
+    }
+
+    /// Reserve the send synchronously, before scheduling network work, so the
+    /// button/hardware Return acknowledge the tap and reject duplicates at once.
+    @discardableResult
+    func submitDraft() -> Task<Void, Never>? {
+        guard !sending, !busy, isReadyForInput, let window = selectedWindow, !draft.isEmpty else { return nil }
         let pane = window.paneID
-        inputRevision += 1
-        let text = draft; sending = true
+        let text = draft
         let generation = connectionGeneration
-        defer { sending = false }
-        do {
-            await inputTail?.value
-            guard generation == connectionGeneration, isConnected else { throw MuxError.message("The connection changed before submission.") }
-            if let pending = incompleteCompletions[pane] {
-                let current = try await readShellCompletionScreen(pane: pane)
-                guard current.beforeCursor == pending.prompt.beforeCursor else {
-                    throw MuxError.message("A completion is still on the remote command line. Inspect or cancel it using Terminal mode before sending this draft.")
+        sending = true; isSubmittingDraft = true
+        inputRevision += 1
+        return Task { [weak self] in
+            guard let self else { return }
+            defer { self.sending = false; self.isSubmittingDraft = false }
+            do {
+                await self.inputTail?.value
+                guard generation == self.connectionGeneration, self.isReadyForInput else { throw MuxError.message("The connection changed before submission.") }
+                if let pending = self.incompleteCompletions[pane] {
+                    let current = try await self.readShellCompletionScreen(pane: pane)
+                    guard current.beforeCursor == pending.prompt.beforeCursor else {
+                        throw MuxError.message("A completion is still on the remote command line. Inspect or cancel it using Terminal mode before sending this draft.")
+                    }
+                    self.incompleteCompletions.removeValue(forKey: pane)
                 }
-                incompleteCompletions.removeValue(forKey: pane)
-            }
-            try await paste(text, pane: pane, submit: true)
-            commandHistories[window.id, default: CommandHistory()].record(text)
-            if selectedWindowID == window.id, draft == text { draft = "" }
-        } catch { self.error = "Send was not confirmed; the draft was kept. Check the terminal before sending again. \(error.localizedDescription)" }
+                try await self.paste(text, pane: pane, submit: true)
+                self.commandHistories[window.id, default: CommandHistory()].record(text)
+                if self.selectedWindowID == window.id, self.draft == text { self.draft = "" }
+            } catch { self.error = "Send was not confirmed; the draft was kept. Check the terminal before sending again. \(error.localizedDescription)" }
+        }
     }
 
     func sendKey(_ bytes: Data) async {
@@ -1279,9 +1291,12 @@ private actor AttentionFixturePeer {
     private(set) var commands: [String] = []
     private var additionalTargets = false
     private var hiddenWindow: Int?
+    private var inputDelay: Duration?
+    private var rejectInput = false
     func install(_ value: ControlChannel?) { channel = value }
     func screen(_ pane: String, _ value: String) { screens[pane] = value }
     func hideWindow(_ index: Int) { hiddenWindow = index }
+    func allowInput(delay: Duration, reject: Bool) { inputDelay = delay; rejectInput = reject }
     func addPollingCandidates() {
         additionalTargets = true
         screens["%20"] = "Development server listening on port 3000"
@@ -1292,7 +1307,11 @@ private actor AttentionFixturePeer {
         let command = String(decoding: data, as: UTF8.self).trimmingCharacters(in: .newlines)
         commands.append(command)
         let lines: [String]
-        if command.hasPrefix("list-windows -a") {
+        if ["set-buffer", "paste-buffer", "send-keys", "delete-buffer"].contains(where: command.hasPrefix), let inputDelay {
+            try await Task.sleep(for: inputDelay)
+            if rejectInput { throw URLError(.networkConnectionLost) }
+            lines = []
+        } else if command.hasPrefix("list-windows -a") {
             lines = (1...11).filter { $0 != hiddenWindow }.map { "\($0 == 11 ? "$2" : "$1")\t@\($0)\t\($0 == 11 ? "review-needed" : "project-\($0)")\t%\($0)\tcodex" }
                 + ["$2\t@1\tlinked-project\t%1\tcodex"]
                 + (additionalTargets ? ["$2\t@20\tnode-server\t%20\tnode", "$2\t@21\tshell\t%21\tzsh", "$2\t@22\tcodex-node\t%22\tnode"] : [])
@@ -1312,6 +1331,44 @@ private actor AttentionFixturePeer {
 }
 
 extension HostWorkspace {
+    func validateComposerSend(initialChecks: [String: Bool], pendingChecks: () -> [String: Bool]) async {
+        guard LibraryStore.screenshotScene == "compose" else { return }
+        var checks = initialChecks
+        let peer = AttentionFixturePeer()
+        await peer.allowInput(delay: .seconds(1), reject: false)
+        let channel = ControlChannel(writer: { try await peer.write($0) }, onEvent: { _ in })
+        await peer.install(channel); await channel.receive(Data("%begin 0 0 0\n%end 0 0 0\n".utf8))
+        control = channel
+        draft = "first message"
+        let revision = inputRevision
+        let task = submitDraft()
+        checks["sendReservesStateBeforeReturning"] = sending && inputRevision == revision + 1 && task != nil
+        checks["duplicateTapIsRejectedSynchronously"] = submitDraft() == nil && inputRevision == revision + 1
+        checks["draftIsKeptUntilHostAcknowledges"] = draft == "first message"
+        try? await Task.sleep(for: .milliseconds(200))
+        checks.merge(pendingChecks(), uniquingKeysWith: { _, new in new })
+        draft = "new edit while sending"
+        await task?.value
+        checks["acknowledgementEndsSendingWithoutDiscardingNewEdits"] = !sending && draft == "new edit while sending"
+        let commands = await peer.commands
+        checks["onePasteAndOneEnterForRepeatedSend"] = commands.filter { $0.hasPrefix("paste-buffer") }.count == 1 && commands.filter { $0.hasPrefix("send-keys") && $0.hasSuffix(" Enter") }.count == 1
+        await channel.close(); await peer.install(nil)
+        let failedPeer = AttentionFixturePeer()
+        await failedPeer.allowInput(delay: .milliseconds(200), reject: true)
+        let failedChannel = ControlChannel(writer: { try await failedPeer.write($0) }, onEvent: { _ in })
+        await failedPeer.install(failedChannel); await failedChannel.receive(Data("%begin 0 0 0\n%end 0 0 0\n".utf8))
+        control = failedChannel; draft = "unconfirmed message"
+        await sendDraft()
+        checks["failureEndsSendingAndKeepsDraftWithWarning"] = !sending && draft == "unconfirmed message" && error?.contains("Send was not confirmed") == true
+        let failedCommands = await failedPeer.commands
+        checks["failedSendDoesNotRetryOrSubmitEnter"] = failedCommands.filter { $0.hasPrefix("set-buffer") }.count == 1 && !failedCommands.contains { $0.hasPrefix("send-keys") }
+        await failedChannel.close(); await failedPeer.install(nil); control = nil
+        let report: [String: Any] = ["checks": checks, "passed": checks.values.allSatisfy { $0 }]
+        if let data = try? JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys]) {
+            try? data.write(to: FileManager.default.temporaryDirectory.appendingPathComponent("mux-compose-report.json"))
+        }
+    }
+
     func validateAutomaticReconnect() async {
         guard LibraryStore.screenshotScene == "reconnect" else { return }
         var checks: [String: Bool] = [:]

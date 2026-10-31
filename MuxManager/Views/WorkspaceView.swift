@@ -15,6 +15,7 @@ struct WorkspaceView: View {
     @State private var magnificationStart: Double?
     @State private var composerFocused = false
     @State private var keyboardVisible = false
+    @AppStorage("composerSpellCheckEnabled") private var composerSpellCheckEnabled = true
 
     var body: some View {
         VStack(spacing: 0) {
@@ -209,6 +210,14 @@ struct WorkspaceView: View {
                     key("Enter", "\r")
                 }.font(.system(.caption, design: .monospaced)).disabled(!workspace.isConnected || workspace.sending)
               }
+              if !workspace.terminalMode {
+                  Toggle(isOn: $composerSpellCheckEnabled) { Image(systemName: "textformat.abc") }
+                      .toggleStyle(.button).buttonStyle(.bordered)
+                      .tint(composerSpellCheckEnabled ? .mint : .secondary)
+                      .accessibilityLabel("Spell check")
+                      .accessibilityValue(composerSpellCheckEnabled ? "On" : "Off")
+                      .accessibilityHint("Turn spelling suggestions in Compose on or off.")
+              }
               if workspace.terminalMode {
                   PasteButton(payloadType: String.self) { strings in paste(strings.joined(separator: "\n")) }
                       .labelStyle(.iconOnly).tint(.mint)
@@ -235,22 +244,29 @@ struct WorkspaceView: View {
                 HStack(alignment: .bottom, spacing: 10) {
                     CommandComposer(text: $workspace.draft, focused: $composerFocused, onSubmit: submitComposer,
                                     onHistory: { workspace.recallCommand(older: $0) },
-                                    isBrowsingHistory: workspace.isBrowsingCommandHistory)
+                                    isBrowsingHistory: workspace.isBrowsingCommandHistory,
+                                    spellCheckEnabled: composerSpellCheckEnabled)
                         .padding(10).background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 12))
                     Button(action: submitComposer) {
-                        Image(systemName: workspace.sending ? "ellipsis" : "arrow.up").font(.headline)
-                            .frame(width: 42, height: 42).background(.mint, in: Circle()).foregroundStyle(.black)
+                        ZStack {
+                            Circle().fill(.mint)
+                            if workspace.isSubmittingDraft { ProgressView().tint(.black) }
+                            else { Image(systemName: "arrow.up").font(.headline).foregroundStyle(.black) }
+                        }.frame(width: 42, height: 42)
                     }
-                    .accessibilityLabel("Send to \(window.name)")
-                    .disabled(workspace.draft.isEmpty || workspace.sending || !workspace.isConnected || workspace.busy)
+                    .accessibilityLabel(workspace.isSubmittingDraft ? "Sending to \(window.name)" : "Send to \(window.name)")
+                    .disabled(workspace.draft.isEmpty || workspace.sending || !workspace.isReadyForInput || workspace.busy)
+                }
+                if workspace.isSubmittingDraft {
+                    Text("Sending…").font(.caption).foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .trailing)
                 }
             }
         }.padding(.horizontal, 12).padding(.vertical, 8).background(.bar)
     }
     private func submitComposer() {
-        guard !workspace.draft.isEmpty, !workspace.sending, workspace.isConnected, !workspace.busy else { return }
+        guard workspace.submitDraft() != nil else { return }
         follow = true; liveToken += 1
-        Task { await workspace.sendDraft() }
     }
     private func key(_ title: String, _ value: String) -> some View {
         Button(title) { sendDirect(Data(value.utf8)) }.buttonStyle(.bordered)
@@ -283,6 +299,7 @@ private struct CommandComposer: UIViewRepresentable {
     var onSubmit: () -> Void
     var onHistory: (Bool) -> Void
     var isBrowsingHistory: Bool
+    var spellCheckEnabled = true
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
     func makeUIView(context: Context) -> CommandTextView {
@@ -295,6 +312,7 @@ private struct CommandComposer: UIViewRepresentable {
         view.textContainer.lineFragmentPadding = 0
         view.autocapitalizationType = .none
         view.autocorrectionType = .no
+        view.setSpellChecking(spellCheckEnabled)
         view.smartQuotesType = .no
         view.smartDashesType = .no
         view.smartInsertDeleteType = .no
@@ -309,6 +327,7 @@ private struct CommandComposer: UIViewRepresentable {
         view.onSubmit = onSubmit
         view.onHistory = onHistory
         view.isBrowsingHistory = isBrowsingHistory
+        view.setSpellChecking(spellCheckEnabled)
         view.font = .monospacedSystemFont(ofSize: UIFont.preferredFont(forTextStyle: .body).pointSize, weight: .regular)
         if view.text != text, view.markedTextRange == nil {
             let selection = view.selectedRange
@@ -359,6 +378,18 @@ private final class CommandTextView: UITextView {
     var onHistory: ((Bool) -> Void)?
     var isBrowsingHistory = false
     var wantsFocus = false
+    private var desiredSpellChecking = true
+    func setSpellChecking(_ enabled: Bool) {
+        desiredSpellChecking = enabled
+        guard markedTextRange == nil else { return }
+        let value: UITextSpellCheckingType = enabled ? .yes : .no
+        guard spellCheckingType != value else { return }
+        spellCheckingType = value
+        if isFirstResponder { reloadInputViews() }
+    }
+    override func unmarkText() {
+        super.unmarkText(); setSpellChecking(desiredSpellChecking)
+    }
     private let placeholder = UILabel()
 
     override init(frame: CGRect, textContainer: NSTextContainer?) {
@@ -432,6 +463,47 @@ private final class CommandTextView: UITextView {
 }
 
 #if DEBUG
+@MainActor
+enum ComposerValidation {
+    static func run(workspace: HostWorkspace) async {
+        func views() -> [UIView] {
+            func flatten(_ view: UIView) -> [UIView] { [view] + view.subviews.flatMap(flatten) }
+            return UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.flatMap(\.windows).flatMap(flatten)
+        }
+        func composer() -> CommandTextView? { views().compactMap { $0 as? CommandTextView }.first }
+        func pause() async { try? await Task.sleep(for: .milliseconds(250)) }
+        var checks: [String: Bool] = [:]
+        checks["spellCheckingDefaultsOnWithoutAutomaticCommandRewrites"] = composer()?.spellCheckingType == .yes && composer()?.autocorrectionType == .no
+        workspace.draft = "editable draft"; await pause()
+        _ = composer()?.becomeFirstResponder(); composer()?.selectedRange = NSRange(location: 4, length: 0)
+        UserDefaults.standard.set(false, forKey: "composerSpellCheckEnabled"); await pause()
+        checks["spellToggleOffPreservesTextCaretAndFocus"] = composer()?.spellCheckingType == .no && composer()?.text == "editable draft" && composer()?.selectedRange.location == 4 && composer()?.isFirstResponder == true
+        checks["spellTogglePreferenceIsSaved"] = UserDefaults.standard.object(forKey: "composerSpellCheckEnabled") as? Bool == false
+        UserDefaults.standard.set(true, forKey: "composerSpellCheckEnabled"); await pause()
+        checks["spellToggleOnUpdatesNativeComposer"] = composer()?.spellCheckingType == .yes
+        composer()?.setMarkedText("candidate", selectedRange: NSRange(location: 9, length: 0))
+        UserDefaults.standard.set(false, forKey: "composerSpellCheckEnabled"); await pause()
+        checks["spellToggleWaitsForMarkedText"] = composer()?.spellCheckingType == .yes && composer()?.markedTextRange != nil
+        composer()?.unmarkText(); await pause()
+        checks["spellToggleAppliesAfterComposition"] = composer()?.spellCheckingType == .no
+        UserDefaults.standard.set(true, forKey: "composerSpellCheckEnabled"); await pause()
+        await workspace.validateComposerSend(initialChecks: checks) {
+            var pending: [String: Bool] = [:]
+            pending["sendingStaysActiveWhileWaitingForHost"] = workspace.sending
+            let revision = workspace.inputRevision
+            if let view = composer(), let key = view.keyCommands?.first(where: { $0.input == "\r" && $0.modifierFlags.isEmpty }) {
+                _ = UIApplication.shared.sendAction(key.action!, to: view, from: key, for: nil)
+            }
+            pending["hardwareReturnCannotDuplicatePendingSend"] = workspace.inputRevision == revision
+            if let window = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }).flatMap(\.windows).first(where: \.isKeyWindow) {
+                let screenshot = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in window.drawHierarchy(in: window.bounds, afterScreenUpdates: true) }
+                try? screenshot.pngData()?.write(to: FileManager.default.temporaryDirectory.appendingPathComponent("mux-compose-sending.png"))
+            }
+            return pending
+        }
+    }
+}
+
 /// Isolated sample data only; dispatches native control/key actions without SSH.
 @MainActor
 enum InputModeValidation {

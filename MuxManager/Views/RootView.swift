@@ -140,6 +140,10 @@ struct RootView: View {
                 if scene == "reconnect", let workspace = model.activeWorkspace {
                     await workspace.validateAutomaticReconnect()
                 }
+                if scene == "compose", let workspace = model.activeWorkspace {
+                    try? await Task.sleep(for: .seconds(2))
+                    await ComposerValidation.run(workspace: workspace)
+                }
                 if scene == "links", let workspace = model.activeWorkspace {
                     try? await Task.sleep(for: .seconds(2))
                     await WebLinkValidation.run(workspace: workspace)
