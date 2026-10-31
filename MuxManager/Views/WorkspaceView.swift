@@ -41,7 +41,7 @@ struct WorkspaceView: View {
                         if magnificationStart == nil { magnificationStart = workspace.fontSize }
                         workspace.fontSize = min(32, max(8, (magnificationStart ?? 14) * scale))
                     }.onEnded { _ in magnificationStart = nil })
-                    .onAppear { updateViewport(geometry.size) }
+                    .onAppear { updateViewport(geometry.size); workspace.noteAttentionWindowViewed() }
                     .onChange(of: geometry.size) { _, size in updateViewport(size) }
                     .onChange(of: workspace.fontSize) { _, _ in updateViewport(geometry.size) }
                     .overlay(alignment: .topLeading) {
@@ -118,7 +118,7 @@ struct WorkspaceView: View {
             // Foreground SSH probes refresh the model, but a held reading
             // capture/emulator can otherwise keep showing the pre-background text.
             if phase == .background { resumeToLive = true }
-            else if phase == .active, resumeToLive { resumeToLive = false; showLive() }
+            else if phase == .active, resumeToLive { resumeToLive = false; workspace.noteAttentionWindowViewed(); showLive() }
         }
         .onChange(of: workspace.selectedWindowID) { _, _ in readingCapture = nil; follow = true; liveToken += 1; composerFocused = false }
         .onChange(of: workspace.inputRevision) { _, _ in readingCapture = nil; follow = true; liveToken += 1 }

@@ -103,6 +103,7 @@ struct CodexNotificationSettingsView: View {
                 }
                 Section("Best effort") {
                     Text("Looks for Codex finishing a response or asking for input. It can miss short tasks or misread custom layouts. Work completed while disconnected is not detected. Existing idle windows do not generate alerts when you connect.")
+                    Text("Screen checks pause after 2 minutes idle or 30 minutes since a window was opened or used. Open the window or send input to resume monitoring. A visible working state does not count as idle.")
                     Text("Monitoring can continue briefly in the background while iOS allows execution. It stops when iOS suspends the app or ends its background runtime. There is no remote push service.")
                     Text("Only host/window names and window identifiers are included in notifications. Terminal contents are not saved or sent to a server. This setting applies to this device.")
                 }

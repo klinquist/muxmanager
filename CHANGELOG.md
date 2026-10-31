@@ -2,6 +2,12 @@
 
 Changes are listed by app version and build number, newest first.
 
+## 1.0 (11) — 2026-10-31
+
+- Limit notification screen checks to Codex panes; stop checking generic Node processes after a screen fails to identify Codex.
+- Pause checks after 2 minutes idle or 30 minutes since a window was opened or used. Opening the window or sending input resumes monitoring; visible working states reset the idle timer.
+- Keep the existing polling rate for eligible windows and recognize unbranded approval dialogs after a Node process has been identified as Codex.
+
 ## 1.0 (10) — 2026-10-31
 
 - Added explicit short-tap handling for web links in Smart and Conversation, with hit testing against the text's rendered link rectangles.
