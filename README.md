@@ -6,7 +6,7 @@ Mux Manager is a native SSH client built around the sessions already running on 
 
 Its **Smart** view wraps terminal text to your screen while preserving colors and the remote window’s dimensions. Your desktop terminal can keep its layout while you read on a smaller screen. Switch to **Original** for the existing grid, or explicitly resize with **Fit device**.
 
-[Website](https://klinquist.github.io/muxmanager/) · [Support / GitHub Issues](https://github.com/klinquist/muxmanager/issues) · [Privacy](https://klinquist.github.io/muxmanager/privacy/) · [MIT license](LICENSE)
+[Website](https://klinquist.github.io/muxmanager/) · [Changelog](CHANGELOG.md) · [Support / GitHub Issues](https://github.com/klinquist/muxmanager/issues) · [Privacy](https://klinquist.github.io/muxmanager/privacy/) · [MIT license](LICENSE)
 
 <p align="center">
   <img src="docs/assets/iphone.png" width="260" alt="Mux Manager on iPhone: colored terminal output with Smart reflow">
