@@ -101,6 +101,12 @@
 - The probe delays each fake tmux input acknowledgement by one second, uses the production send queue and native composer, and captures the actual spinner/`Sending…` layout on both devices. It also verifies spelling defaults on, the device-local preference updates native text traits, toggling preserves text/caret/focus, and marked-text composition defers trait changes until unmarking. Autocorrection remains off; terminal input traits are unchanged.
 - Reports and view captures are under ignored `output/validation/2026-10-31/compose-feedback/`. The 62 dependency-free MuxCore tests pass from the automatic-reconnect validation; these changes are in the app/UI layer. No third-party dependency is added. Device checks remain for system spelling underlines/suggestion menus, supported keyboard languages, actual finger taps, and physical keyboard/IME behavior over a slow direct or bastion SSH link. The native fixture uses an in-memory ControlChannel peer and does not execute submitted input on a host.
 
+## Compose autocorrection follow-up checked 2026-10-31
+
+- Compose now sets both `spellCheckingType` and `autocorrectionType` to `.yes` when ABC is enabled and `.no` when disabled. The default remains on and the existing device-local preference is retained. Capitalization, smart punctuation, and literal Terminal input traits are unchanged.
+- The full arm64 Debug simulator app builds. The `compose` fixture again passes 15 checks on each of iPhone 17 Pro Max and iPad Pro 13-inch (M5), iOS 27.0. Updated assertions verify both native traits default on, change together, preserve text/caret/focus, and defer changes through marked-text composition. Slow-send/duplicate/failure checks still pass. Reports are under ignored `output/validation/2026-10-31/compose-autocorrection/`.
+- These checks verify native keyboard configuration and composer behavior; actual word replacements depend on the active iOS keyboard/language and remain a physical-device check, including hardware keyboards and the last word before Send.
+
 ## Remaining device checks
 
 Run on an iPhone and iPad, including landscape, a hardware keyboard, software keyboard, and iPad split view.

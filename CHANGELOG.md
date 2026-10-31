@@ -2,6 +2,11 @@
 
 Changes are listed by app version and build number, newest first.
 
+## 1.0 (14) — 2026-10-31
+
+- Enable automatic word correction in Compose alongside spell checking. The ABC toggle controls both and remembers the device's preference.
+- Preserve marked-text composition when toggling correction; Terminal input stays literal.
+
 ## 1.0 (13) — 2026-10-31
 
 - Show an immediate spinner and Sending status when Compose submits, including on slow connections. Reserve the send before scheduling SSH work to reject duplicate taps or Return presses.

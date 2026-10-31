@@ -214,9 +214,9 @@ struct WorkspaceView: View {
                   Toggle(isOn: $composerSpellCheckEnabled) { Image(systemName: "textformat.abc") }
                       .toggleStyle(.button).buttonStyle(.bordered)
                       .tint(composerSpellCheckEnabled ? .mint : .secondary)
-                      .accessibilityLabel("Spell check")
+                      .accessibilityLabel("Spelling and autocorrect")
                       .accessibilityValue(composerSpellCheckEnabled ? "On" : "Off")
-                      .accessibilityHint("Turn spelling suggestions in Compose on or off.")
+                      .accessibilityHint("Turn spell checking and automatic correction in Compose on or off.")
               }
               if workspace.terminalMode {
                   PasteButton(payloadType: String.self) { strings in paste(strings.joined(separator: "\n")) }
@@ -311,7 +311,6 @@ private struct CommandComposer: UIViewRepresentable {
         view.textContainerInset = .zero
         view.textContainer.lineFragmentPadding = 0
         view.autocapitalizationType = .none
-        view.autocorrectionType = .no
         view.setSpellChecking(spellCheckEnabled)
         view.smartQuotesType = .no
         view.smartDashesType = .no
@@ -383,8 +382,9 @@ private final class CommandTextView: UITextView {
         desiredSpellChecking = enabled
         guard markedTextRange == nil else { return }
         let value: UITextSpellCheckingType = enabled ? .yes : .no
-        guard spellCheckingType != value else { return }
-        spellCheckingType = value
+        let correction: UITextAutocorrectionType = enabled ? .yes : .no
+        guard spellCheckingType != value || autocorrectionType != correction else { return }
+        spellCheckingType = value; autocorrectionType = correction
         if isFirstResponder { reloadInputViews() }
     }
     override func unmarkText() {
@@ -473,19 +473,19 @@ enum ComposerValidation {
         func composer() -> CommandTextView? { views().compactMap { $0 as? CommandTextView }.first }
         func pause() async { try? await Task.sleep(for: .milliseconds(250)) }
         var checks: [String: Bool] = [:]
-        checks["spellCheckingDefaultsOnWithoutAutomaticCommandRewrites"] = composer()?.spellCheckingType == .yes && composer()?.autocorrectionType == .no
+        checks["spellCheckingAndAutocorrectionDefaultOn"] = composer()?.spellCheckingType == .yes && composer()?.autocorrectionType == .yes
         workspace.draft = "editable draft"; await pause()
         _ = composer()?.becomeFirstResponder(); composer()?.selectedRange = NSRange(location: 4, length: 0)
         UserDefaults.standard.set(false, forKey: "composerSpellCheckEnabled"); await pause()
-        checks["spellToggleOffPreservesTextCaretAndFocus"] = composer()?.spellCheckingType == .no && composer()?.text == "editable draft" && composer()?.selectedRange.location == 4 && composer()?.isFirstResponder == true
+        checks["spellToggleOffPreservesTextCaretAndFocus"] = composer()?.spellCheckingType == .no && composer()?.autocorrectionType == .no && composer()?.text == "editable draft" && composer()?.selectedRange.location == 4 && composer()?.isFirstResponder == true
         checks["spellTogglePreferenceIsSaved"] = UserDefaults.standard.object(forKey: "composerSpellCheckEnabled") as? Bool == false
         UserDefaults.standard.set(true, forKey: "composerSpellCheckEnabled"); await pause()
-        checks["spellToggleOnUpdatesNativeComposer"] = composer()?.spellCheckingType == .yes
+        checks["spellToggleOnUpdatesNativeComposer"] = composer()?.spellCheckingType == .yes && composer()?.autocorrectionType == .yes
         composer()?.setMarkedText("candidate", selectedRange: NSRange(location: 9, length: 0))
         UserDefaults.standard.set(false, forKey: "composerSpellCheckEnabled"); await pause()
-        checks["spellToggleWaitsForMarkedText"] = composer()?.spellCheckingType == .yes && composer()?.markedTextRange != nil
+        checks["spellToggleWaitsForMarkedText"] = composer()?.spellCheckingType == .yes && composer()?.autocorrectionType == .yes && composer()?.markedTextRange != nil
         composer()?.unmarkText(); await pause()
-        checks["spellToggleAppliesAfterComposition"] = composer()?.spellCheckingType == .no
+        checks["spellToggleAppliesAfterComposition"] = composer()?.spellCheckingType == .no && composer()?.autocorrectionType == .no
         UserDefaults.standard.set(true, forKey: "composerSpellCheckEnabled"); await pause()
         await workspace.validateComposerSend(initialChecks: checks) {
             var pending: [String: Bool] = [:]
