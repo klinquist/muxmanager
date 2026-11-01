@@ -11,7 +11,9 @@ final class AppModel: ObservableObject {
     private var notificationNavigationRequest = UUID()
     private var backgroundSession: BackgroundConnectionSession?
     private var transitionID = UUID()
+    #if os(iOS)
     private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
+    #endif
     private var backgroundTaskOwner: UUID?
     private var preparationTask: Task<Void, Never>?
     private var graceTimer: Task<Void, Never>?
@@ -83,6 +85,7 @@ final class AppModel: ObservableObject {
         }
         let request = UUID(); notificationNavigationRequest = request
         let workspace = workspace(for: profile)
+        AppPlatform.activate()
         activeHostID = profile.id; notificationNavigationRevision += 1
         Task { [weak self] in
             let originalIntent = workspace.connectionIntent
@@ -90,7 +93,7 @@ final class AppModel: ObservableObject {
             // A tap can arrive while SwiftUI is still delivering the foreground
             // transition. Let connection validation/recovery finish first.
             try? await Task.sleep(for: .milliseconds(100))
-            while UIApplication.shared.applicationState != .active || self?.foregroundResumeSession != nil || workspace.state == .disconnecting {
+            while !AppPlatform.isActive || self?.foregroundResumeSession != nil || workspace.state == .disconnecting {
                 guard self?.notificationNavigationRequest == request, workspace.connectionIntent == originalIntent,
                       ContinuousClock.now < deadline else { return }
                 try? await Task.sleep(for: .milliseconds(100))
@@ -105,6 +108,7 @@ final class AppModel: ObservableObject {
             await workspace.openNotificationWindow(target, isCurrent: { [weak self] in self?.notificationNavigationRequest == request })
         }
     }
+    #if os(iOS)
     func suspend() {
         #if DEBUG
         if LibraryStore.screenshotScene != nil { return }
@@ -220,4 +224,19 @@ final class AppModel: ObservableObject {
         backgroundTask = .invalid; backgroundTaskOwner = nil
         if task != .invalid { UIApplication.shared.endBackgroundTask(task) }
     }
+    #else
+    func suspend() {} // macOS windows keep their SSH connections while inactive.
+    func resume() {
+        for workspace in workspaces.values {
+            workspace.unpauseAfterBackground()
+            if workspace.isConnected {
+                Task { await workspace.resumeFromBackground(forceReconnect: false) }
+            }
+        }
+    }
+    func disconnectAll() async {
+        for workspace in workspaces.values { await workspace.disconnect() }
+    }
+    #endif
+
 }

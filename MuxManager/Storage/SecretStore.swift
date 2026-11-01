@@ -35,10 +35,14 @@ struct SecretStore {
     }
 
     private func base(_ account: String, synchronized: Bool) -> [String: Any] {
-        [kSecClass as String: kSecClassGenericPassword,
+        var query: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
          kSecAttrService as String: service,
          kSecAttrAccount as String: account,
          kSecAttrSynchronizable as String: synchronized]
+        #if os(macOS)
+        query[kSecUseDataProtectionKeychain as String] = true
+        #endif
+        return query
     }
     private func failure(_ status: OSStatus) -> MuxError {
         .message("Keychain: \(SecCopyErrorMessageString(status, nil) as String? ?? String(status))")

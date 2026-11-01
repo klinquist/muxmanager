@@ -24,6 +24,10 @@ output/
 *.p12
 *.pfx
 *.mobileprovision
+*.provisionprofile
+*.dmg
+*.app/
+MuxManager-macOS*.zip
 .ssh/
 .aws/
 .agents/

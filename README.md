@@ -1,8 +1,8 @@
 # Mux Manager
 
-**Your tmux windows, comfortably readable on iPhone and iPad.**
+**Your tmux windows, comfortably readable on iPhone, iPad, and Mac.**
 
-Mux Manager is a native SSH client built around the sessions already running on your computers. Browse windows by name, check a long-running task, read a coding assistant’s output, and send the next command from your phone.
+Mux Manager is a native SSH client built around the sessions already running on your computers. Browse windows by name, check a long-running task, read a coding assistant’s output, and send the next command from your phone, tablet, or Mac.
 
 Its **Smart** view wraps terminal text to your screen while preserving colors and the remote window’s dimensions. Your desktop terminal can keep its layout while you read on a smaller screen. Switch to **Original** for the existing grid, or explicitly resize with **Fit device**.
 
@@ -22,7 +22,7 @@ Its **Smart** view wraps terminal text to your screen while preserving colors an
 - Compose commands in a native input box or use direct keys. Best-effort zsh/bash autocomplete returns readable completions to the input box without installing a remote helper.
 - Keep saved connections and key metadata in sync automatically using private CloudKit, with credentials in iCloud Keychain.
 
-Requires **iOS/iPadOS 17 or later**, an SSH-accessible host, and **tmux 3.2 or later**. No remote plugin or OpenAI API key is required. This project is independent of OpenAI and the tmux project.
+Requires **iOS/iPadOS 17 or later** or **macOS 15 or later**, an SSH-accessible host, and **tmux 3.2 or later**. No remote plugin or OpenAI API key is required. This project is independent of OpenAI and the tmux project.
 
 ## Open and run
 
@@ -34,6 +34,31 @@ Open `MuxManager.xcodeproj` and select the **MuxManager** scheme. The deployment
 4. Build and run on an iPhone or iPad. Grant local-network access when connecting to a LAN host. Sign in to iCloud and enable iCloud Keychain to test sync between devices.
 
 Sync runs automatically when the app becomes active, after edits, and periodically while active to receive changes and retry failures. There is no manual sync control or routine sync status in the interface. Saved connections work locally when CloudKit is unavailable. Settings and public-key metadata use the private CloudKit database. Passwords, private keys, and imported key passphrases use synchronizable Keychain items. Drafts, output, and host trust decisions never enter CloudKit. The app does not require an OpenAI account or API key; it interacts with the Codex process already running on your computer.
+
+## macOS
+
+[Download Mux Manager for Mac — version 1.0, build 15](https://linquist.com/muxmanager/mac/). The universal app supports Apple Silicon and Intel Macs running **macOS 15 or later**. Unzip it, move **Mux Manager.app** to Applications, and open it.
+
+Open **`MuxManagerMac.xcodeproj`**, select **MuxManagerMac**, and choose My Mac to build from source. It uses the same two direct libraries and pinned versions as iOS. Set your signing team/bundle/container in `Config/Local.xcconfig` as above; enable the same CloudKit container for the Mac App ID. Production downloads use Production CloudKit and the same Keychain access group as the iPhone/iPad release. Sign in to the same Apple Account and enable iCloud Keychain to receive saved connections and credentials. Development and Production databases remain separate.
+
+The native AppKit terminal supports selection, Command-C/Command-V, horizontal panning in Original, and vertical scrollback. Smart uses continuous selectable, colored text that wraps locally; **Fit window** explicitly resizes the remote window. Terminal mode sends keys directly, including Shift-Tab. Mouse input stays local for selection and scrolling; terminal mouse reporting is disabled because this app displays tmux snapshots.
+
+- **Command-N:** add a connection.
+- **Shift-Command-L:** resume Live output.
+- **Shift-Command-T:** switch to Terminal and focus it.
+- **Return:** send Compose; **Shift-Return:** insert a newline.
+- **Up/Down:** command history at the first/last composer line; **Tab:** best-effort shell completion.
+
+Spelling and autocorrect default on in Compose and follow the ABC toggle. Connections and eligible Codex notification checks continue when another app is active. A sleeping Mac cannot monitor remote work. Quit disconnects this app's clients and attempts to restore Fit sizing; remote tmux sessions continue. Cross-device sync and real sleep/network recovery still need acceptance testing on your devices.
+
+```sh
+xcodebuild -project MuxManagerMac.xcodeproj -scheme MuxManagerMac \
+  -destination 'platform=macOS' build
+xcodebuild -project MuxManagerMac.xcodeproj -scheme MuxManagerMac \
+  -destination 'platform=macOS' test
+```
+
+The native tests use fictional hosts and in-memory transport fixtures, without reading your saved connections, Keychain, or CloudKit. `python3 scripts/generate-mac-project.py` regenerates only the Mac project. For direct downloads, archive a universal Release build, sign it with Developer ID using a provisioning profile for the CloudKit container, set the CloudKit environment to Production, and notarize with Apple's `notarytool`. Keep certificates, API keys, provisioning profiles, archives, and signed binaries outside the public repository.
 
 ## Connect
 
@@ -112,7 +137,7 @@ There are **two direct external libraries and twelve resolved external packages 
 
 | Package | Purpose |
 | --- | --- |
-| SwiftTerm 1.19.0 | UIKit terminal emulation, colors, selection, and keyboard support. Pinned to the stable 1.x API. |
+| SwiftTerm 1.19.0 | UIKit/AppKit terminal emulation, colors, selection, and keyboard support. Pinned to the stable 1.x API. |
 | Citadel 0.12.1 | SSH transport, bastion forwarding, and OpenSSH key parsing. |
 | swift-nio-ssh (Wellz26 fork) | Citadel's SSH protocol implementation, including its RSA extension. |
 | swift-nio | SSH networking and buffers. |

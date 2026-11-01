@@ -1,0 +1,578 @@
+// !$*UTF8*$!
+{
+	"archiveVersion" = 1;
+	"classes" = {
+	};
+	"objectVersion" = 60;
+	"objects" = {
+		"0BA65C752DB4827F050E3C81" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "sourcecode.swift";
+			"path" = "MuxManager/App/AppModel.swift";
+			"sourceTree" = "SOURCE_ROOT";
+		};
+		"ABC87EF44C8007B8DAE41952" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = "0BA65C752DB4827F050E3C81";
+		};
+		"B8C079CE9C71822112A78E3A" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "sourcecode.swift";
+			"path" = "MuxManager/App/CodexNotifications.swift";
+			"sourceTree" = "SOURCE_ROOT";
+		};
+		"F1D8AD513C3474270A6D0D60" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = "B8C079CE9C71822112A78E3A";
+		};
+		"EFFF351D56A85DB082F686D9" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "sourcecode.swift";
+			"path" = "MuxManager/App/HostWorkspace.swift";
+			"sourceTree" = "SOURCE_ROOT";
+		};
+		"5C7D976DAAC0A4848FC8B75E" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = "EFFF351D56A85DB082F686D9";
+		};
+		"5D82F7BDE1649A30A2BF8EA5" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "sourcecode.swift";
+			"path" = "MuxManager/Mac/MacApp.swift";
+			"sourceTree" = "SOURCE_ROOT";
+		};
+		"FE60B240FFAF8C06F47C997D" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = "5D82F7BDE1649A30A2BF8EA5";
+		};
+		"A1569C733449328C6B63948F" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "sourcecode.swift";
+			"path" = "MuxManager/Mac/MacComposer.swift";
+			"sourceTree" = "SOURCE_ROOT";
+		};
+		"983CB1A935DAF291501C4E7B" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = "A1569C733449328C6B63948F";
+		};
+		"2C436C2631E11E74E1CCF644" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "sourcecode.swift";
+			"path" = "MuxManager/Mac/MacStyledCapture.swift";
+			"sourceTree" = "SOURCE_ROOT";
+		};
+		"1894422C81B5DC5D701E657A" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = "2C436C2631E11E74E1CCF644";
+		};
+		"77F6998DF60C49931D8294D5" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "sourcecode.swift";
+			"path" = "MuxManager/Mac/MacTerminal.swift";
+			"sourceTree" = "SOURCE_ROOT";
+		};
+		"39C04C5274C6C2F0F884033D" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = "77F6998DF60C49931D8294D5";
+		};
+		"4ACE506B46BFB8E4F0EBFA3B" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "sourcecode.swift";
+			"path" = "MuxManager/Mac/MacValidation.swift";
+			"sourceTree" = "SOURCE_ROOT";
+		};
+		"4133F95C326354FBCBA91FC1" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = "4ACE506B46BFB8E4F0EBFA3B";
+		};
+		"A27C03ED1B026D0798F7610E" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "sourcecode.swift";
+			"path" = "MuxManager/Mac/MacWorkspaceView.swift";
+			"sourceTree" = "SOURCE_ROOT";
+		};
+		"3C21C320D6AAA3E7141C5188" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = "A27C03ED1B026D0798F7610E";
+		};
+		"658C9CE4708022CBB16E060A" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "sourcecode.swift";
+			"path" = "MuxManager/Platform.swift";
+			"sourceTree" = "SOURCE_ROOT";
+		};
+		"43A0322BF59A5B3A6166789B" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = "658C9CE4708022CBB16E060A";
+		};
+		"1DF356ADD47F7A28EF54BECE" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "sourcecode.swift";
+			"path" = "MuxManager/SSH/SSHTransport.swift";
+			"sourceTree" = "SOURCE_ROOT";
+		};
+		"0809328EC02BEFDB57733BFE" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = "1DF356ADD47F7A28EF54BECE";
+		};
+		"8874FF6692A2834701D5124B" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "sourcecode.swift";
+			"path" = "MuxManager/Storage/CloudSync.swift";
+			"sourceTree" = "SOURCE_ROOT";
+		};
+		"107B4100670E3A71643640CA" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = "8874FF6692A2834701D5124B";
+		};
+		"3192E2FB45283022BFFB39DA" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "sourcecode.swift";
+			"path" = "MuxManager/Storage/LibraryStore.swift";
+			"sourceTree" = "SOURCE_ROOT";
+		};
+		"BF495F01DE715A163CF4DAE0" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = "3192E2FB45283022BFFB39DA";
+		};
+		"E0980D0B3231D9037AFF0FBC" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "sourcecode.swift";
+			"path" = "MuxManager/Storage/SecretStore.swift";
+			"sourceTree" = "SOURCE_ROOT";
+		};
+		"1D8847B73CE972B37E7E8926" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = "E0980D0B3231D9037AFF0FBC";
+		};
+		"EAB38320C1212AFE0ACFA621" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "sourcecode.swift";
+			"path" = "MuxManager/Views/ConnectionEditor.swift";
+			"sourceTree" = "SOURCE_ROOT";
+		};
+		"B1A685666491C6A69A99F283" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = "EAB38320C1212AFE0ACFA621";
+		};
+		"8438BA1467AFAF374FEAD9C8" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "sourcecode.swift";
+			"path" = "MuxManager/Views/KeyLibraryView.swift";
+			"sourceTree" = "SOURCE_ROOT";
+		};
+		"387BA2F246FCFFAEFB66EDAC" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = "8438BA1467AFAF374FEAD9C8";
+		};
+		"655B1FDE542F7E7C7C7F9147" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "sourcecode.swift";
+			"path" = "MuxManager/Views/RootView.swift";
+			"sourceTree" = "SOURCE_ROOT";
+		};
+		"19CF1D22C896C34CEE15F87E" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = "655B1FDE542F7E7C7C7F9147";
+		};
+		"B9353635B11184446E1B0B34" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "folder.assetcatalog";
+			"path" = "MuxManager/Assets.xcassets";
+			"sourceTree" = "SOURCE_ROOT";
+		};
+		"6E33548E29B9A21502653910" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "text";
+			"path" = "MuxManager/Resources/ThirdPartyNotices.txt";
+			"sourceTree" = "SOURCE_ROOT";
+		};
+		"BA3E883964C59534D4DE3BE8" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "text.xcconfig";
+			"path" = "Config/Mac.xcconfig";
+			"sourceTree" = "SOURCE_ROOT";
+		};
+		"54D07DE30A0591913E741A8C" = {
+			"isa" = "PBXFileReference";
+			"explicitFileType" = "wrapper.application";
+			"includeInIndex" = 0;
+			"path" = "Mux Manager.app";
+			"sourceTree" = "BUILT_PRODUCTS_DIR";
+		};
+		"3FD8802216F0D01DD174104E" = {
+			"isa" = "PBXGroup";
+			"children" = (
+				"54D07DE30A0591913E741A8C",
+				"0464AC911E8A239AD3F54AF2",
+			);
+			"name" = "Products";
+			"sourceTree" = "<group>";
+		};
+		"161D9ACC2DCE590387097531" = {
+			"isa" = "PBXGroup";
+			"children" = (
+				"E25114EAA8B51F68FE05923D",
+				"0BA65C752DB4827F050E3C81",
+				"B8C079CE9C71822112A78E3A",
+				"EFFF351D56A85DB082F686D9",
+				"5D82F7BDE1649A30A2BF8EA5",
+				"A1569C733449328C6B63948F",
+				"2C436C2631E11E74E1CCF644",
+				"77F6998DF60C49931D8294D5",
+				"4ACE506B46BFB8E4F0EBFA3B",
+				"A27C03ED1B026D0798F7610E",
+				"658C9CE4708022CBB16E060A",
+				"1DF356ADD47F7A28EF54BECE",
+				"8874FF6692A2834701D5124B",
+				"3192E2FB45283022BFFB39DA",
+				"E0980D0B3231D9037AFF0FBC",
+				"EAB38320C1212AFE0ACFA621",
+				"8438BA1467AFAF374FEAD9C8",
+				"655B1FDE542F7E7C7C7F9147",
+				"B9353635B11184446E1B0B34",
+				"6E33548E29B9A21502653910",
+				"BA3E883964C59534D4DE3BE8",
+				"3FD8802216F0D01DD174104E",
+			);
+			"sourceTree" = "<group>";
+		};
+		"ED2C73EA7C6B4C806DCEFE9D" = {
+			"isa" = "PBXSourcesBuildPhase";
+			"buildActionMask" = 2147483647;
+			"files" = (
+				"ABC87EF44C8007B8DAE41952",
+				"F1D8AD513C3474270A6D0D60",
+				"5C7D976DAAC0A4848FC8B75E",
+				"FE60B240FFAF8C06F47C997D",
+				"983CB1A935DAF291501C4E7B",
+				"1894422C81B5DC5D701E657A",
+				"39C04C5274C6C2F0F884033D",
+				"4133F95C326354FBCBA91FC1",
+				"3C21C320D6AAA3E7141C5188",
+				"43A0322BF59A5B3A6166789B",
+				"0809328EC02BEFDB57733BFE",
+				"107B4100670E3A71643640CA",
+				"BF495F01DE715A163CF4DAE0",
+				"1D8847B73CE972B37E7E8926",
+				"B1A685666491C6A69A99F283",
+				"387BA2F246FCFFAEFB66EDAC",
+				"19CF1D22C896C34CEE15F87E",
+			);
+			"runOnlyForDeploymentPostprocessing" = 0;
+		};
+		"A9C239167B5F6E06BE7DAB5F" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = "B9353635B11184446E1B0B34";
+		};
+		"8314D0CC4C70284B2210DFAF" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = "6E33548E29B9A21502653910";
+		};
+		"26A6015D88533925D6ADB56F" = {
+			"isa" = "PBXResourcesBuildPhase";
+			"buildActionMask" = 2147483647;
+			"files" = (
+				"A9C239167B5F6E06BE7DAB5F",
+				"8314D0CC4C70284B2210DFAF",
+			);
+			"runOnlyForDeploymentPostprocessing" = 0;
+		};
+		"7E97C10E662E74E3F0D64AFD" = {
+			"isa" = "XCLocalSwiftPackageReference";
+			"relativePath" = ".";
+		};
+		"9609239DBB5EBBD6C74B0829" = {
+			"isa" = "XCSwiftPackageProductDependency";
+			"productName" = "MuxCore";
+		};
+		"63263BD46A1954567BD74A0A" = {
+			"isa" = "XCRemoteSwiftPackageReference";
+			"repositoryURL" = "https://github.com/orlandos-nl/Citadel.git";
+			"requirement" = {
+				"kind" = "exactVersion";
+				"version" = "0.12.1";
+			};
+		};
+		"CEC1352781986530A7AD73B1" = {
+			"isa" = "XCSwiftPackageProductDependency";
+			"package" = "63263BD46A1954567BD74A0A";
+			"productName" = "Citadel";
+		};
+		"4B3E627DA3FE9DF81D2BDB77" = {
+			"isa" = "XCRemoteSwiftPackageReference";
+			"repositoryURL" = "https://github.com/migueldeicaza/SwiftTerm.git";
+			"requirement" = {
+				"kind" = "exactVersion";
+				"version" = "1.19.0";
+			};
+		};
+		"2B5409A78C7A218C26AFC243" = {
+			"isa" = "XCSwiftPackageProductDependency";
+			"package" = "4B3E627DA3FE9DF81D2BDB77";
+			"productName" = "SwiftTerm";
+		};
+		"04602A83699C1F26FFD65BF2" = {
+			"isa" = "PBXBuildFile";
+			"productRef" = "9609239DBB5EBBD6C74B0829";
+		};
+		"0B350EF611FBEDABA5BA1823" = {
+			"isa" = "PBXBuildFile";
+			"productRef" = "CEC1352781986530A7AD73B1";
+		};
+		"6CAA10956AE461E4D8B7FB53" = {
+			"isa" = "PBXBuildFile";
+			"productRef" = "2B5409A78C7A218C26AFC243";
+		};
+		"BFAAD4AC4B536D406D360C45" = {
+			"isa" = "PBXFrameworksBuildPhase";
+			"buildActionMask" = 2147483647;
+			"files" = (
+				"04602A83699C1F26FFD65BF2",
+				"0B350EF611FBEDABA5BA1823",
+				"6CAA10956AE461E4D8B7FB53",
+			);
+			"runOnlyForDeploymentPostprocessing" = 0;
+		};
+		"AE644151B82E8C0CBEF01945" = {
+			"isa" = "XCBuildConfiguration";
+			"name" = "Debug";
+			"buildSettings" = {
+				"SDKROOT" = "macosx";
+				"SUPPORTED_PLATFORMS" = "macosx";
+				"MACOSX_DEPLOYMENT_TARGET" = "15.0";
+				"CLANG_ENABLE_MODULES" = "YES";
+				"SWIFT_VERSION" = "5.0";
+				"SWIFT_STRICT_CONCURRENCY" = "targeted";
+				"SWIFT_OPTIMIZATION_LEVEL" = "-Onone";
+				"SWIFT_ACTIVE_COMPILATION_CONDITIONS" = "DEBUG $(inherited)";
+				"ENABLE_TESTABILITY" = "YES";
+				"ONLY_ACTIVE_ARCH" = "YES";
+				"DEBUG_INFORMATION_FORMAT" = "dwarf";
+				"PRODUCT_NAME" = "Mux Manager";
+				"GENERATE_INFOPLIST_FILE" = "NO";
+				"SWIFT_EMIT_LOC_STRINGS" = "YES";
+			};
+			"baseConfigurationReference" = "BA3E883964C59534D4DE3BE8";
+		};
+		"C4FD18A6933100D08D26AF78" = {
+			"isa" = "XCBuildConfiguration";
+			"name" = "Release";
+			"buildSettings" = {
+				"SDKROOT" = "macosx";
+				"SUPPORTED_PLATFORMS" = "macosx";
+				"MACOSX_DEPLOYMENT_TARGET" = "15.0";
+				"CLANG_ENABLE_MODULES" = "YES";
+				"SWIFT_VERSION" = "5.0";
+				"SWIFT_STRICT_CONCURRENCY" = "targeted";
+				"SWIFT_OPTIMIZATION_LEVEL" = "-O";
+				"SWIFT_COMPILATION_MODE" = "wholemodule";
+				"DEBUG_INFORMATION_FORMAT" = "dwarf-with-dsym";
+				"PRODUCT_NAME" = "Mux Manager";
+				"GENERATE_INFOPLIST_FILE" = "NO";
+				"SWIFT_EMIT_LOC_STRINGS" = "YES";
+			};
+			"baseConfigurationReference" = "BA3E883964C59534D4DE3BE8";
+		};
+		"E214600383A7D51269B97964" = {
+			"isa" = "XCConfigurationList";
+			"buildConfigurations" = (
+				"AE644151B82E8C0CBEF01945",
+				"C4FD18A6933100D08D26AF78",
+			);
+			"defaultConfigurationIsVisible" = 0;
+			"defaultConfigurationName" = "Release";
+		};
+		"72C9EFBD76AF1FBACBA5D025" = {
+			"isa" = "PBXNativeTarget";
+			"buildConfigurationList" = "E214600383A7D51269B97964";
+			"buildPhases" = (
+				"ED2C73EA7C6B4C806DCEFE9D",
+				"BFAAD4AC4B536D406D360C45",
+				"26A6015D88533925D6ADB56F",
+			);
+			"buildRules" = (
+			);
+			"dependencies" = (
+			);
+			"name" = "MuxManagerMac";
+			"packageProductDependencies" = (
+				"9609239DBB5EBBD6C74B0829",
+				"CEC1352781986530A7AD73B1",
+				"2B5409A78C7A218C26AFC243",
+			);
+			"productName" = "Mux Manager";
+			"productReference" = "54D07DE30A0591913E741A8C";
+			"productType" = "com.apple.product-type.application";
+		};
+		"E25114EAA8B51F68FE05923D" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "sourcecode.swift";
+			"path" = "Tests/MuxManagerMacTests/MacAppTests.swift";
+			"sourceTree" = "SOURCE_ROOT";
+		};
+		"22AFD561233A79E70CA624EC" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = "E25114EAA8B51F68FE05923D";
+		};
+		"FF6AAA5EAD33ECD082631C08" = {
+			"isa" = "PBXSourcesBuildPhase";
+			"buildActionMask" = 2147483647;
+			"files" = (
+				"22AFD561233A79E70CA624EC",
+			);
+			"runOnlyForDeploymentPostprocessing" = 0;
+		};
+		"0464AC911E8A239AD3F54AF2" = {
+			"isa" = "PBXFileReference";
+			"explicitFileType" = "wrapper.cfbundle";
+			"includeInIndex" = 0;
+			"path" = "MuxManagerMacTests.xctest";
+			"sourceTree" = "BUILT_PRODUCTS_DIR";
+		};
+		"98933F6ECDBC3F257AFE7DC3" = {
+			"isa" = "XCBuildConfiguration";
+			"name" = "Debug";
+			"baseConfigurationReference" = "BA3E883964C59534D4DE3BE8";
+			"buildSettings" = {
+				"PRODUCT_NAME" = "MuxManagerMacTests";
+				"PRODUCT_BUNDLE_IDENTIFIER" = "$(MUX_TEST_BUNDLE_PREFIX).macos-tests";
+				"MUX_TEST_BUNDLE_PREFIX" = "com.linquist.muxmanager";
+				"GENERATE_INFOPLIST_FILE" = "YES";
+				"INFOPLIST_FILE" = "";
+				"CODE_SIGN_ENTITLEMENTS" = "";
+				"BUNDLE_LOADER" = "$(TEST_HOST)";
+				"TEST_HOST" = "$(BUILT_PRODUCTS_DIR)/Mux Manager.app/Contents/MacOS/Mux Manager";
+				"LD_RUNPATH_SEARCH_PATHS" = "$(inherited) @loader_path/../Frameworks @executable_path/../Frameworks";
+			};
+		};
+		"A63FC8DA9474882CBA20E0A5" = {
+			"isa" = "XCBuildConfiguration";
+			"name" = "Release";
+			"baseConfigurationReference" = "BA3E883964C59534D4DE3BE8";
+			"buildSettings" = {
+				"PRODUCT_NAME" = "MuxManagerMacTests";
+				"PRODUCT_BUNDLE_IDENTIFIER" = "$(MUX_TEST_BUNDLE_PREFIX).macos-tests";
+				"MUX_TEST_BUNDLE_PREFIX" = "com.linquist.muxmanager";
+				"GENERATE_INFOPLIST_FILE" = "YES";
+				"INFOPLIST_FILE" = "";
+				"CODE_SIGN_ENTITLEMENTS" = "";
+				"BUNDLE_LOADER" = "$(TEST_HOST)";
+				"TEST_HOST" = "$(BUILT_PRODUCTS_DIR)/Mux Manager.app/Contents/MacOS/Mux Manager";
+				"LD_RUNPATH_SEARCH_PATHS" = "$(inherited) @loader_path/../Frameworks @executable_path/../Frameworks";
+			};
+		};
+		"81A5965B38A1550E14C555ED" = {
+			"isa" = "XCConfigurationList";
+			"buildConfigurations" = (
+				"98933F6ECDBC3F257AFE7DC3",
+				"A63FC8DA9474882CBA20E0A5",
+			);
+			"defaultConfigurationIsVisible" = 0;
+			"defaultConfigurationName" = "Release";
+		};
+		"CA9C9D6564C885AD4D6D55C5" = {
+			"isa" = "PBXTargetDependency";
+			"target" = "72C9EFBD76AF1FBACBA5D025";
+		};
+		"51F038B10C2D1755152667BB" = {
+			"isa" = "PBXNativeTarget";
+			"buildConfigurationList" = "81A5965B38A1550E14C555ED";
+			"buildPhases" = (
+				"FF6AAA5EAD33ECD082631C08",
+			);
+			"buildRules" = (
+			);
+			"dependencies" = (
+				"CA9C9D6564C885AD4D6D55C5",
+			);
+			"name" = "MuxManagerMacTests";
+			"productName" = "MuxManagerMacTests";
+			"productReference" = "0464AC911E8A239AD3F54AF2";
+			"productType" = "com.apple.product-type.bundle.unit-test";
+		};
+		"02689E916D30794286DE6D3C" = {
+			"isa" = "XCBuildConfiguration";
+			"name" = "Debug";
+			"buildSettings" = {
+				"SDKROOT" = "macosx";
+				"SUPPORTED_PLATFORMS" = "macosx";
+				"MACOSX_DEPLOYMENT_TARGET" = "15.0";
+				"CLANG_ENABLE_MODULES" = "YES";
+				"SWIFT_VERSION" = "5.0";
+				"SWIFT_STRICT_CONCURRENCY" = "targeted";
+				"SWIFT_OPTIMIZATION_LEVEL" = "-Onone";
+				"SWIFT_ACTIVE_COMPILATION_CONDITIONS" = "DEBUG $(inherited)";
+				"ENABLE_TESTABILITY" = "YES";
+				"ONLY_ACTIVE_ARCH" = "YES";
+				"DEBUG_INFORMATION_FORMAT" = "dwarf";
+			};
+		};
+		"56DE30F1F1BA5A016729B2C9" = {
+			"isa" = "XCBuildConfiguration";
+			"name" = "Release";
+			"buildSettings" = {
+				"SDKROOT" = "macosx";
+				"SUPPORTED_PLATFORMS" = "macosx";
+				"MACOSX_DEPLOYMENT_TARGET" = "15.0";
+				"CLANG_ENABLE_MODULES" = "YES";
+				"SWIFT_VERSION" = "5.0";
+				"SWIFT_STRICT_CONCURRENCY" = "targeted";
+				"SWIFT_OPTIMIZATION_LEVEL" = "-O";
+				"SWIFT_COMPILATION_MODE" = "wholemodule";
+				"DEBUG_INFORMATION_FORMAT" = "dwarf-with-dsym";
+			};
+		};
+		"99F5860641A9DD246F776E8E" = {
+			"isa" = "XCConfigurationList";
+			"buildConfigurations" = (
+				"02689E916D30794286DE6D3C",
+				"56DE30F1F1BA5A016729B2C9",
+			);
+			"defaultConfigurationIsVisible" = 0;
+			"defaultConfigurationName" = "Release";
+		};
+		"608BFB70B2C20C121E1C7148" = {
+			"isa" = "PBXProject";
+			"attributes" = {
+				"BuildIndependentTargetsInParallel" = "YES";
+				"LastUpgradeCheck" = "2710";
+				"TargetAttributes" = {
+					"72C9EFBD76AF1FBACBA5D025" = {
+						"CreatedOnToolsVersion" = "27.1";
+						"SystemCapabilities" = {
+							"com.apple.iCloud" = {
+								"enabled" = 1;
+							};
+							"com.apple.Sandbox" = {
+								"enabled" = 1;
+							};
+						};
+					};
+				};
+			};
+			"buildConfigurationList" = "99F5860641A9DD246F776E8E";
+			"compatibilityVersion" = "Xcode 15.0";
+			"developmentRegion" = "en";
+			"hasScannedForEncodings" = 0;
+			"knownRegions" = (
+				"en",
+				"Base",
+			);
+			"mainGroup" = "161D9ACC2DCE590387097531";
+			"packageReferences" = (
+				"7E97C10E662E74E3F0D64AFD",
+				"63263BD46A1954567BD74A0A",
+				"4B3E627DA3FE9DF81D2BDB77",
+			);
+			"productRefGroup" = "3FD8802216F0D01DD174104E";
+			"projectDirPath" = "";
+			"projectRoot" = "";
+			"targets" = (
+				"72C9EFBD76AF1FBACBA5D025",
+				"51F038B10C2D1755152667BB",
+			);
+		};
+	};
+	"rootObject" = "608BFB70B2C20C121E1C7148";
+}

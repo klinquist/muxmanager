@@ -60,14 +60,14 @@ struct RootView: View {
                     WindowSidebar(workspace: workspace, selected: {
                         model.cancelNotificationNavigation()
                         preferredColumn = .detail
-                        if UIDevice.current.userInterfaceIdiom == .phone { visibility = .detailOnly }
+                        if AppPlatform.isPhone { visibility = .detailOnly }
                     }, manage: { action in managementRequest = ManagementRequest(workspace: workspace, action: action) })
                 }
             }
             .listStyle(.sidebar)
             .navigationTitle("Mux Manager")
             .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
+                ToolbarItem(placement: .muxInfo) {
                     Menu {
                         if let workspace = model.activeWorkspace {
                             Button("Connection diagnostics", systemImage: "stethoscope") { diagnosticWorkspace = workspace }
@@ -119,8 +119,9 @@ struct RootView: View {
                 if scene == "connection" { editingProfile = library.visibleProfiles.first }
                 else if scene != "hosts" && scene != "connecting-hosts" {
                     preferredColumn = .detail
-                    if UIDevice.current.userInterfaceIdiom == .phone { visibility = .detailOnly }
+                    if AppPlatform.isPhone { visibility = .detailOnly }
                 }
+                #if os(iOS)
                 if scene.hasPrefix("history") {
                     try? await Task.sleep(nanoseconds: 2_000_000_000)
                     HistoryScrollValidation.writeReport()
@@ -148,9 +149,13 @@ struct RootView: View {
                     try? await Task.sleep(for: .seconds(2))
                     await WebLinkValidation.run(workspace: workspace)
                 }
+                #endif
             }
             #endif
         }
+        #if os(macOS)
+        .onReceive(NotificationCenter.default.publisher(for: .muxAddConnection)) { _ in editingProfile = ConnectionProfile() }
+        #endif
         .sheet(item: $editingProfile) { profile in ConnectionEditor(profile: profile) }
         .sheet(isPresented: $showLicenses) { OpenSourceLicensesView() }
         .sheet(isPresented: $showSyncDiagnostics) { CloudSyncDiagnosticsView() }
@@ -159,7 +164,7 @@ struct RootView: View {
             guard revision > 0 else { return }
             showNotificationSettings = false; dismissSheetsForNotification()
             preferredColumn = .detail
-            if UIDevice.current.userInterfaceIdiom == .phone { visibility = .detailOnly }
+            if AppPlatform.isPhone { visibility = .detailOnly }
         }
         .sheet(item: $diagnosticWorkspace) { ConnectionDiagnosticsView(workspace: $0) }
         .sheet(item: $managementRequest) { request in
@@ -191,12 +196,12 @@ struct CloudSyncDiagnosticsView: View {
                     .padding()
             }
             .navigationTitle("iCloud diagnostics")
-            .navigationBarTitleDisplayMode(.inline)
+            .muxInlineTitle()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } }
                 ToolbarItem(placement: .primaryAction) {
                     Button(copied ? "Copied" : "Copy report") {
-                        UIPasteboard.general.string = library.syncDiagnostics; copied = true
+                        AppPlatform.copy(library.syncDiagnostics); copied = true
                     }
                 }
             }
@@ -232,12 +237,12 @@ struct ConnectionDiagnosticsView: View {
                 }
             }
             .navigationTitle("Connection diagnostics")
-            .navigationBarTitleDisplayMode(.inline)
+            .muxInlineTitle()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
                     Button(copied ? "Copied" : "Copy log", systemImage: "doc.on.doc") {
-                        UIPasteboard.general.string = workspace.diagnosticReport; copied = true
+                        AppPlatform.copy(workspace.diagnosticReport); copied = true
                     }
                 }
             }
@@ -362,7 +367,7 @@ struct ManagementSheet: View {
     @State private var saving = false
     var body: some View {
         NavigationStack {
-            Form { TextField("Name", text: $name).textInputAutocapitalization(.never).autocorrectionDisabled().disabled(saving) }
+            Form { TextField("Name", text: $name).muxNoCapitalization().autocorrectionDisabled().disabled(saving) }
                 .navigationTitle(action.rawValue)
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) { Button("Cancel", action: onClose) }
@@ -382,6 +387,6 @@ struct ManagementSheet: View {
                         }.disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || workspace.busy || saving)
                     }
                 }
-        }.presentationDetents([.medium]).interactiveDismissDisabled(saving)
+        }.muxMediumSheet().interactiveDismissDisabled(saving)
     }
 }

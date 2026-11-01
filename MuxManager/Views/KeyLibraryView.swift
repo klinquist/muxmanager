@@ -24,7 +24,7 @@ struct KeyLibraryView: View {
                             } icon: { Image(systemName: "key.horizontal").foregroundStyle(.mint) }
                         }
                         .contextMenu {
-                            Button("Copy public key", systemImage: "doc.on.doc") { UIPasteboard.general.string = key.publicKey }
+                            Button("Copy public key", systemImage: "doc.on.doc") { AppPlatform.copy(key.publicKey) }
                             Button("Delete key", systemImage: "trash", role: .destructive) {
                                 do { try library.removeKey(key) } catch { self.error = error.localizedDescription }
                             }
@@ -79,7 +79,7 @@ private struct AddKeyView: View {
                 }
                 if let error { Text(error).foregroundStyle(.red) }
             }
-            .textInputAutocapitalization(.never).autocorrectionDisabled()
+            .muxNoCapitalization().autocorrectionDisabled()
             .navigationTitle("Add SSH key")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
@@ -125,7 +125,7 @@ private struct PublicKeyView: View {
             Form {
                 Section("Public key") {
                     Text(key.publicKey).font(.system(.caption, design: .monospaced)).textSelection(.enabled)
-                    Button("Copy public key", systemImage: "doc.on.doc") { UIPasteboard.general.string = key.publicKey }
+                    Button("Copy public key", systemImage: "doc.on.doc") { AppPlatform.copy(key.publicKey) }
                     ShareLink(item: key.publicKey) { Label("Share public key", systemImage: "square.and.arrow.up") }
                 }
                 Section {

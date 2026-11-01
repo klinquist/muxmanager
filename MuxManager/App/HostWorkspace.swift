@@ -1,8 +1,6 @@
 import Foundation
 import Combine
-#if DEBUG
-import UIKit
-#endif
+
 import MuxCore
 
 @MainActor
@@ -153,8 +151,8 @@ final class HostWorkspace: ObservableObject, Identifiable {
             draft = "unfinished"
         }
         if scene == "copy-conversation" { conversation = true }
-        fontSize = UIDevice.current.userInterfaceIdiom == .pad ? 22 : 16
-        if scene == "original" { fontSize = UIDevice.current.userInterfaceIdiom == .pad ? 18 : 13 }
+        fontSize = AppPlatform.isTablet ? 22 : 16
+        if scene == "original" { fontSize = AppPlatform.isTablet ? 18 : 13 }
         joinedCapture = """
         \u{1b}[38;5;244m$ git status --short
          M Sources/API/RequestHandler.swift
@@ -1370,7 +1368,7 @@ extension HostWorkspace {
     }
 
     func validateAutomaticReconnect() async {
-        guard LibraryStore.screenshotScene == "reconnect" else { return }
+        guard ["reconnect", "mac-tests"].contains(LibraryStore.screenshotScene ?? "") else { return }
         var checks: [String: Bool] = [:]
         var attempts = 0, failures = 0, active = 0, maxActive = 0
         var permanentFailure = false, slow = false, omitWindow = false

@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		AE142DADCE34F51200000001 /* Platform.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE142DADCE34F51200000002; };
 		3EAB34D47333AABE7A63024C /* CodexNotifications.swift in Sources */ = {isa = PBXBuildFile; fileRef = 59F5E98E1B8C05CE194E7F8D /* CodexNotifications.swift */; };
 		0BD26182FC04FC6905B14A78 /* MuxManager/Terminal/TerminalCanvas.swift in Sources */ = {isa = PBXBuildFile; fileRef = E92A4E8A53AD0B054B033CD8 /* MuxManager/Terminal/TerminalCanvas.swift */; };
 		24FDBA8A838E9C2638EB7DD9 /* MuxManager/SSH/SSHTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 26C16E942F20B537A2F63FB0 /* MuxManager/SSH/SSHTransport.swift */; };
@@ -28,6 +29,7 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		AE142DADCE34F51200000002 /* Platform.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MuxManager/Platform.swift; sourceTree = SOURCE_ROOT; };
 		59F5E98E1B8C05CE194E7F8D /* CodexNotifications.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MuxManager/App/CodexNotifications.swift; sourceTree = "<group>"; };
 		10C1E7B3C8DB79DE56717CAD /* MuxManager/Storage/LibraryStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MuxManager/Storage/LibraryStore.swift; sourceTree = SOURCE_ROOT; };
 		26C16E942F20B537A2F63FB0 /* MuxManager/SSH/SSHTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MuxManager/SSH/SSHTransport.swift; sourceTree = SOURCE_ROOT; };
@@ -72,6 +74,7 @@
 		0D6E4079E36703EBD37C0072 = {
 			isa = PBXGroup;
 			children = (
+				AE142DADCE34F51200000002 /* Platform.swift */,
 				33B80364FCABEBA3EFC9E89E /* MuxManager/App/AppModel.swift */,
 				59F5E98E1B8C05CE194E7F8D /* CodexNotifications.swift */,
 				DF87A96906872A74A10EBA1F /* MuxManager/App/HostWorkspace.swift */,
@@ -176,6 +179,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				AE142DADCE34F51200000001 /* Platform.swift in Sources */,
 				3A78D0155661CC53E2DA288C /* MuxManager/App/AppModel.swift in Sources */,
 				3EAB34D47333AABE7A63024C /* CodexNotifications.swift in Sources */,
 				26FD3F1DB784A0C6CED3381C /* MuxManager/App/HostWorkspace.swift in Sources */,

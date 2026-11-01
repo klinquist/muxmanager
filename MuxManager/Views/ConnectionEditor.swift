@@ -15,8 +15,8 @@ struct ConnectionEditor: View {
                 Section("Connection") {
                     TextField("Name", text: $profile.name)
                     TextField("Hostname or IP address", text: $profile.hostname)
-                        .textContentType(.URL).keyboardType(.URL)
-                    TextField("Port", value: $profile.port, format: .number.grouping(.never)).keyboardType(.numberPad)
+                        .muxURLInput()
+                    TextField("Port", value: $profile.port, format: .number.grouping(.never)).muxNumberInput()
                     TextField("Username", text: $profile.username).textContentType(.username)
                 }
                 Section {
@@ -49,10 +49,10 @@ struct ConnectionEditor: View {
                 }
                 if let error { Section { Text(error).foregroundStyle(.red) } }
             }
-            .textInputAutocapitalization(.never)
+            .muxNoCapitalization()
             .autocorrectionDisabled()
             .navigationTitle(library.profiles.contains(where: { $0.id == profile.id }) ? "Edit connection" : "Add connection")
-            .navigationBarTitleDisplayMode(.inline)
+            .muxInlineTitle()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
@@ -70,6 +70,6 @@ struct ConnectionEditor: View {
                     }
                 }
             }
-        }.sheet(isPresented: $showKeys) { KeyLibraryView() }
+        }.muxFormSheet().sheet(isPresented: $showKeys) { KeyLibraryView() }
     }
 }

@@ -29,8 +29,12 @@ final class LibraryStore: ObservableObject {
         let arguments = ProcessInfo.processInfo.arguments
         let index = arguments.firstIndex(of: "--mux-screenshot-scene")
         let argument = index.flatMap { $0 + 1 < arguments.count ? arguments[$0 + 1] : nil }
-        let value = ProcessInfo.processInfo.environment["MUX_SCREENSHOT_SCENE"] ?? argument
-        return ["hosts", "smart", "original", "fit", "connection", "preview", "shell", "history", "history-original", "connecting", "connecting-hosts", "copy", "copy-original", "copy-conversation", "input", "input-original", "attention", "links", "reconnect", "compose"].contains(value ?? "") ? value : nil
+        var value = ProcessInfo.processInfo.environment["MUX_SCREENSHOT_SCENE"] ?? argument
+        #if os(macOS)
+        // A Debug-only fixture entry point for native launchers that do not pass arguments.
+        value = value ?? Bundle.main.object(forInfoDictionaryKey: "MuxValidationScene") as? String
+        #endif
+        return ["hosts", "smart", "original", "fit", "connection", "preview", "shell", "history", "history-original", "connecting", "connecting-hosts", "copy", "copy-original", "copy-conversation", "input", "input-original", "attention", "links", "reconnect", "compose", "mac", "mac-tests"].contains(value ?? "") ? value : nil
     }
     #endif
 

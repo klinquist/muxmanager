@@ -39,6 +39,12 @@ final class CodexNotifications: NSObject, ObservableObject, UNUserNotificationCe
         super.init()
         center.delegate = self
     }
+    private static func canNotify(_ status: UNAuthorizationStatus) -> Bool {
+        #if os(iOS)
+        if status == .ephemeral { return true }
+        #endif
+        return status == .authorized || status == .provisional
+    }
     func refreshAuthorization() async { authorization = await center.notificationSettings().authorizationStatus }
     func setEnabled(_ value: Bool) async {
         error = nil
@@ -46,7 +52,7 @@ final class CodexNotifications: NSObject, ObservableObject, UNUserNotificationCe
             do { _ = try await center.requestAuthorization(options: [.alert, .sound]) }
             catch { self.error = error.localizedDescription }
             await refreshAuthorization()
-            guard authorization == .authorized || authorization == .provisional || authorization == .ephemeral else { return }
+            guard Self.canNotify(authorization) else { return }
         }
         do { try library.writeLocal(value, name: "codex-notifications.json") }
         catch { self.error = error.localizedDescription; return }
@@ -65,7 +71,7 @@ final class CodexNotifications: NSObject, ObservableObject, UNUserNotificationCe
     func post(hostName: String, pane: CodexPaneTarget, state: CodexAttentionState, hostID: UUID) async {
         guard enabled else { return }
         await refreshAuthorization()
-        guard enabled, authorization == .authorized || authorization == .provisional || authorization == .ephemeral else { return }
+        guard enabled, Self.canNotify(authorization) else { return }
         let target = CodexNotificationTarget(hostID: hostID, sessionID: pane.sessionID, windowID: pane.windowID, paneID: pane.paneID)
         let content = Self.content(hostName: hostName, windowName: pane.windowName, state: state, target: target)
         do { try await center.add(UNNotificationRequest(identifier: "codex-" + UUID().uuidString, content: content, trigger: nil)) }
@@ -104,13 +110,17 @@ struct CodexNotificationSettingsView: View {
                 Section("Best effort") {
                     Text("Looks for Codex finishing a response or asking for input. It can miss short tasks or misread custom layouts. Work completed while disconnected is not detected. Existing idle windows do not generate alerts when you connect.")
                     Text("Screen checks pause after 2 minutes idle or 30 minutes since a window was opened or used. Open the window or send input to resume monitoring. A visible working state does not count as idle.")
+                    #if os(iOS)
                     Text("Monitoring can continue briefly in the background while iOS allows execution. It stops when iOS suspends the app or ends its background runtime. There is no remote push service.")
+                    #else
+                    Text("Monitoring continues while Mux Manager is running, including when another app is active. It pauses while your Mac is asleep. There is no remote push service.")
+                    #endif
                     Text("Only host/window names and window identifiers are included in notifications. Terminal contents are not saved or sent to a server. This setting applies to this device.")
                 }
                 if notifications.authorization == .denied {
                     Section {
-                        Text("Notifications are disabled in iOS Settings.")
-                        Link("Open Settings", destination: URL(string: UIApplication.openSettingsURLString)!)
+                        Text("Notifications are disabled in system settings.")
+                        Link("Open Settings", destination: AppPlatform.notificationSettingsURL)
                     }
                 }
                 if let error = notifications.error { Section { Text(error).foregroundStyle(.orange) } }
@@ -118,6 +128,6 @@ struct CodexNotificationSettingsView: View {
             .navigationTitle("Codex notifications")
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
             .task { await notifications.refreshAuthorization() }
-        }
+        }.muxFormSheet()
     }
 }

@@ -2,6 +2,15 @@
 
 Changes are listed by app version and build number, newest first.
 
+## 1.0 (15) — 2026-11-01 — macOS
+
+- Add a native macOS app for Apple Silicon and Intel, requiring macOS 15 or later, with no new dependencies.
+- Share SSH, bastion connections, key management, tmux discovery, automatic reconnect, iCloud/Keychain sync, and optional Codex notifications with iPhone/iPad.
+- Add an AppKit terminal and continuous selectable Smart output, with colors, web links, multiline Copy, native Paste, and pinned remote columns in Original.
+- Add native Compose with Return/Shift-Return, command history, shell completion, spelling/autocorrect, and desktop keyboard shortcuts. Fit window remains the explicit remote-resize mode.
+- Keep connections running while another Mac app is active; disconnect cleanly on Quit. Terminal mouse interaction remains local to selection and scrolling.
+- Add a separate Mac Xcode project and isolated native control/rendering and reconnect tests.
+
 ## 1.0 (14) — 2026-10-31
 
 - Enable automatic word correction in Compose alongside spell checking. The ABC toggle controls both and remembers the device's preference.
