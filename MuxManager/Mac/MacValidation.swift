@@ -10,23 +10,12 @@ enum MacValidation {
         // The Mac smoke fixture never opens SSH, reads Keychain, or syncs CloudKit.
         var checks: [String: Bool] = [:]
         checks["fixtureHasHostsAndWindows"] = model.library.visibleProfiles.count == 3 && model.activeWorkspace?.windows.count == 5
-        let text = MacCommandTextView()
-        text.wantedSpelling = true; text.applySpelling()
-        checks["composerSpellingAndAutocorrection"] = text.isContinuousSpellCheckingEnabled && text.isAutomaticSpellingCorrectionEnabled
-        var submissions = 0
-        text.onSubmit = { submissions += 1 }
-        let enter = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: 0, context: nil, characters: "\r", charactersIgnoringModifiers: "\r", isARepeat: false, keyCode: 36)!
-        text.keyDown(with: enter)
-        checks["returnSubmitsOnce"] = submissions == 1
-        let shift = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: .shift, timestamp: 0, windowNumber: 0, context: nil, characters: "\r", charactersIgnoringModifiers: "\r", isARepeat: false, keyCode: 36)!
-        text.keyDown(with: shift)
-        checks["shiftReturnInsertsNewline"] = submissions == 1 && text.string == "\n"
-        text.wantedSpelling = false; text.applySpelling()
-        checks["spellingToggleDisablesBoth"] = !text.isContinuousSpellCheckingEnabled && !text.isAutomaticSpellingCorrectionEnabled
+        checks["macDefaultsToTerminal"] = model.activeWorkspace?.terminalMode == true
         let capture = MacTerminalStyle.attributed(TerminalCaptureStyle.parse("\u{1b}[31mred\u{1b}[0m\nhttps://example.com"), size: 14)
         checks["styledTextAndLinks"] = capture.string == "red\nhttps://example.com" && capture.attribute(.link, at: 5, effectiveRange: nil) != nil
         let window = NSApp.windows.first { $0.contentView != nil && $0.isVisible }
         checks["nativeWindowRendered"] = window != nil && (window?.frame.width ?? 0) >= 900
+        checks["windowOpensWithTerminalFocus"] = window?.firstResponder is MacPinnedTerminal
 
         let reading = MacReadingScroll(frame: NSRect(x: 0, y: 0, width: 320, height: 240))
         let longWord = String(repeating: "filename", count: 30)
@@ -62,13 +51,14 @@ enum MacValidation {
         let sink = KeySink(); raw.terminal.terminalDelegate = sink
         raw.terminal.doCommand(by: #selector(NSResponder.insertBacktab(_:)))
         checks["terminalBackTab"] = sink.data == Data([27, 91, 90])
-        var histories: [Bool] = []; var tabs = 0
-        text.onHistory = { histories.append($0) }; text.onTab = { tabs += 1 }
-        text.string = ""; text.setSelectedRange(NSRange(location: 0, length: 0))
-        for code: UInt16 in [126, 125, 48] {
-            text.keyDown(with: NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: 0, context: nil, characters: "", charactersIgnoringModifiers: "", isARepeat: false, keyCode: code)!)
-        }
-        checks["composerHistoryAndTab"] = histories == [true, false] && tabs == 1
+        sink.data = Data()
+        raw.terminal.doCommand(by: #selector(NSResponder.insertNewline(_:)))
+        checks["returnGoesToTerminal"] = sink.data == Data([13])
+        sink.data = Data()
+        raw.terminal.doCommand(by: #selector(NSResponder.insertTab(_:)))
+        checks["tabGoesToTerminal"] = sink.data == Data([9])
+        func descendants(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(descendants) }
+        checks["noComposerInMacWindow"] = window?.contentView.map { !descendants($0).contains { ($0 as? NSTextView)?.accessibilityLabel() == "Message or command" } } == true
         if let view = window?.contentView, let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) {
             view.cacheDisplay(in: view.bounds, to: bitmap)
             try? bitmap.representation(using: .png, properties: [:])?.write(to: FileManager.default.temporaryDirectory.appendingPathComponent("mux-mac-window.png"))

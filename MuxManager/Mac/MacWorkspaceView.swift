@@ -6,13 +6,12 @@ import MuxCore
 struct WorkspaceView: View {
     @ObservedObject var workspace: HostWorkspace
     var returnToWindows: () -> Void
-    @AppStorage("composerSpellCheckEnabled") private var spelling = true
     @State private var action: ManagementAction?
     @State private var diagnostics = false
     @State private var follow = true
     @State private var heldCapture: String?
     @State private var liveToken = 0
-    @State private var focusToken = 0
+    @State private var needsInitialFocus = true
 
     var body: some View {
         VStack(spacing: 0) {
@@ -23,19 +22,16 @@ struct WorkspaceView: View {
                         Text("Fit window").tag(DisplayMode.fit)
                         Text("Original").tag(DisplayMode.original)
                     }.pickerStyle(.segmented).frame(maxWidth: 360)
-                    Picker("Input", selection: Binding(get: { workspace.terminalMode }, set: { value in workspace.setTerminalMode(value); focusToken += 1 })) {
-                        Text("Compose").tag(false); Text("Terminal").tag(true)
-                    }.pickerStyle(.segmented).frame(width: 200)
                     Spacer()
                     Text("\(workspace.remoteColumns)×\(workspace.remoteRows)").monospacedDigit().foregroundStyle(.secondary)
                 }.padding(12).disabled(!workspace.isReadyForInput)
                 GeometryReader { geometry in
                     ZStack(alignment: .topLeading) {
-                        if workspace.displayMode == .smart || workspace.conversation {
+                        if workspace.displayMode == .smart {
                             MacStyledCapture(capture: heldCapture ?? workspace.joinedCapture,
-                                             fontSize: workspace.fontSize, conversation: workspace.conversation,
+                                             fontSize: workspace.fontSize,
                                              follow: $follow, liveToken: liveToken,
-                                             onSelection: pauseForSelection)
+                                             onSelection: pauseForSelection, onFocus: focusTerminal)
                             if workspace.terminalMode && workspace.directInput {
                                 MacTerminalCanvas(workspace: workspace, follow: .constant(true), liveToken: liveToken, inputOnly: true)
                                     .frame(width: 1, height: 1).opacity(0.01)
@@ -45,7 +41,7 @@ struct WorkspaceView: View {
                         }
                     }
                     .background(Color(red: 0.035, green: 0.055, blue: 0.07))
-                    .onAppear { viewport(geometry.size); workspace.noteAttentionWindowViewed() }
+                    .onAppear { viewport(geometry.size); focusTerminal(); workspace.noteAttentionWindowViewed() }
                     .onChange(of: geometry.size) { _, size in viewport(size) }
                     .onChange(of: workspace.fontSize) { _, _ in viewport(geometry.size) }
                 }
@@ -57,7 +53,7 @@ struct WorkspaceView: View {
                     Button("Live", systemImage: "arrow.down.to.line", action: live).help("Follow the latest output (⇧⌘L)")
                     if workspace.terminalMode {
                         Button("Focus terminal", systemImage: "keyboard") {
-                            workspace.setTerminalMode(true); focusToken += 1; live()
+                            focusTerminal()
                         }.help("Focus terminal (⇧⌘T)")
                         Button("Paste", systemImage: "doc.on.clipboard") {
                             guard let text = NSPasteboard.general.string(forType: .string) else { return }
@@ -74,31 +70,6 @@ struct WorkspaceView: View {
                         if workspace.canDisconnect { Button("Disconnect") { Task { await workspace.disconnect() } } }
                         else { Button("Connect") { Task { await workspace.connect() } }.disabled(!workspace.canConnect) }
                     }.padding(10).background(.orange.opacity(0.12))
-                }
-                if !workspace.terminalMode {
-                    HStack(alignment: .bottom, spacing: 10) {
-                        MacComposer(text: $workspace.draft, spelling: spelling, focusToken: focusToken,
-                                    browsingHistory: workspace.isBrowsingCommandHistory,
-                                    onSubmit: { if workspace.submitDraft() != nil { live() } },
-                                    onHistory: { workspace.recallCommand(older: $0) },
-                                    onTab: { Task { await workspace.completeInShell() } })
-                            .frame(height: 88)
-                            .background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: 8))
-                        VStack(spacing: 10) {
-                            Toggle("ABC", isOn: $spelling).toggleStyle(.button)
-                                .help("Spelling and autocorrect").accessibilityLabel("Spelling and autocorrect")
-                            Button {
-                                if workspace.submitDraft() != nil { live() }
-                            } label: {
-                                if workspace.isSubmittingDraft { ProgressView().controlSize(.small).frame(width: 46) }
-                                else { Label("Send", systemImage: "arrow.up").frame(width: 46) }
-                            }.buttonStyle(.borderedProminent)
-                                .disabled(!workspace.isReadyForInput || workspace.draft.isEmpty || workspace.sending || workspace.busy)
-                                .help("Send (Return); Shift-Return inserts a newline")
-                        }
-                    }.padding(12)
-                    if workspace.isSubmittingDraft { Text("Sending…").font(.caption).foregroundStyle(.secondary).padding(.bottom, 6) }
-                    if let hint = workspace.completionHint { Text(hint).font(.caption).foregroundStyle(.secondary).padding(.bottom, 6) }
                 }
             } else {
                 ContentUnavailableView {
@@ -122,7 +93,6 @@ struct WorkspaceView: View {
                     Divider()
                     Button("Larger text") { workspace.fontSize = min(32, workspace.fontSize + 1) }
                     Button("Smaller text") { workspace.fontSize = max(8, workspace.fontSize - 1) }
-                    Toggle("Conversation view", isOn: $workspace.conversation).disabled(workspace.terminalMode)
                     Divider()
                     Button("Disconnect") { Task { await workspace.disconnect() } }.disabled(!workspace.canDisconnect)
                 } label: { Image(systemName: "ellipsis.circle") }.help("Window actions")
@@ -138,14 +108,25 @@ struct WorkspaceView: View {
             if value { heldCapture = nil }
             else if heldCapture == nil { heldCapture = workspace.joinedCapture }
         }
-        .onChange(of: workspace.selectedWindowID) { _, _ in live(); focusToken += 1; workspace.noteAttentionWindowViewed() }
+        .onChange(of: workspace.selectedWindowID) { _, window in
+            live(); workspace.noteAttentionWindowViewed()
+            if window != nil { focusTerminal() }
+        }
+        .onChange(of: workspace.isReadyForInput) { _, ready in
+            if ready && needsInitialFocus { focusTerminal() }
+        }
         .onChange(of: workspace.inputRevision) { _, _ in live() }
         .onChange(of: workspace.connectionRecoveryRevision) { _, _ in live() }
         .onChange(of: workspace.notificationFocusRevision) { _, _ in live() }
         .onReceive(NotificationCenter.default.publisher(for: .muxLiveOutput)) { _ in live() }
-        .onReceive(NotificationCenter.default.publisher(for: .muxFocusTerminal)) { _ in workspace.setTerminalMode(true); focusToken += 1; live() }
+        .onReceive(NotificationCenter.default.publisher(for: .muxFocusTerminal)) { _ in focusTerminal() }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in workspace.noteAttentionWindowViewed() }
         .onReceive(NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didWakeNotification)) { _ in live() }
+    }
+    private func focusTerminal() {
+        needsInitialFocus = !workspace.isReadyForInput
+        workspace.setTerminalMode(true)
+        live()
     }
     private func live() { heldCapture = nil; follow = true; liveToken += 1 }
     private func pauseForSelection() { heldCapture = workspace.joinedCapture; follow = false; workspace.directInput = false }

@@ -49,10 +49,10 @@ enum MacTerminalStyle {
 struct MacStyledCapture: NSViewRepresentable {
     let capture: String
     let fontSize: Double
-    let conversation: Bool
     @Binding var follow: Bool
     let liveToken: Int
     let onSelection: () -> Void
+    let onFocus: () -> Void
     func makeCoordinator() -> Coordinator { Coordinator() }
     func makeNSView(context: Context) -> MacReadingScroll {
         let view = MacReadingScroll()
@@ -61,21 +61,12 @@ struct MacStyledCapture: NSViewRepresentable {
     }
     func updateNSView(_ view: MacReadingScroll, context: Context) {
         context.coordinator.onSelection = onSelection
+        view.text.onTerminalFocus = onFocus
         view.onManualScroll = { follow = false }
         view.follow = follow
         context.coordinator.updating = true
         defer { context.coordinator.updating = false }
-        let value: NSAttributedString
-        if conversation {
-            let result = NSMutableAttributedString(string: "")
-            for block in CodexPresentation.blocks(from: capture) {
-                let role = block.role == .user ? "YOU" : (block.role == .assistant ? "CODEX" : "TERMINAL")
-                result.append(NSAttributedString(string: role + "\n", attributes: [.font: NSFont.monospacedSystemFont(ofSize: 11, weight: .bold), .foregroundColor: NSColor.systemMint]))
-                result.append(MacTerminalStyle.attributed(block.styledText, size: fontSize))
-                result.append(NSAttributedString(string: "\n\n"))
-            }
-            value = result
-        } else { value = MacTerminalStyle.attributed(TerminalCaptureStyle.parse(capture), size: fontSize) }
+        let value = MacTerminalStyle.attributed(TerminalCaptureStyle.parse(capture), size: fontSize)
         if !view.text.attributedString().isEqual(to: value) { view.text.textStorage?.setAttributedString(value) }
         if context.coordinator.lastLiveToken != liveToken { view.follow = true; view.text.setSelectedRange(NSRange(location: 0, length: 0)) }
         context.coordinator.lastLiveToken = liveToken
@@ -97,6 +88,11 @@ struct MacStyledCapture: NSViewRepresentable {
 private final class MacFlippedDocument: NSView { override var isFlipped: Bool { true } }
 
 final class MacOutputTextView: NSTextView {
+    var onTerminalFocus: (() -> Void)?
+    override func mouseDown(with event: NSEvent) {
+        super.mouseDown(with: event)
+        if selectedRange().length == 0 && event.clickCount == 1 { onTerminalFocus?() }
+    }
     // Terminal output is copied as plain text, including all selected paragraphs.
     override var writablePasteboardTypes: [NSPasteboard.PasteboardType] { [.string] }
     override func writeSelection(to pasteboard: NSPasteboard, type: NSPasteboard.PasteboardType) -> Bool {

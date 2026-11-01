@@ -2,6 +2,12 @@
 
 Changes are listed by app version and build number, newest first.
 
+## 1.0 (16) — 2026-11-01 — macOS
+
+- Make the Mac app terminal-only. Remove the Compose input box, Send button, spelling controls, and input-mode switcher. iPhone/iPad keep Compose.
+- Focus the terminal when opening a tmux window. Return, Tab, arrows, and Shift-Tab go directly to the remote shell or TUI.
+- Keep Smart, Original, and Fit window display modes. Click unselected Smart output or use Focus terminal to resume typing after selecting text.
+
 ## 1.0 (15) — 2026-11-01 — macOS
 
 - Add a native macOS app for Apple Silicon and Intel, requiring macOS 15 or later, with no new dependencies.

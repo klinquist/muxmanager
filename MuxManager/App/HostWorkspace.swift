@@ -32,7 +32,11 @@ final class HostWorkspace: ObservableObject, Identifiable {
     #endif
     @Published private(set) var displayMode: DisplayMode = .smart
     @Published var conversation = false
+    #if os(macOS)
+    @Published private(set) var terminalMode = true
+    #else
     @Published private(set) var terminalMode = false
+    #endif
     @Published var directInput = false
     @Published var controlModifier = false
     @Published var fontSize: Double = 14

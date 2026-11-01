@@ -19,7 +19,7 @@ Its **Smart** view wraps terminal text to your screen while preserving colors an
 - Browse, create, and rename tmux sessions and windows using a native sidebar.
 - Read colored output, zoom text, scroll history, and hide the keyboard when you need more room.
 - Tap web links in terminal output to open them in your default browser, including links wrapped across terminal rows.
-- Compose commands in a native input box or use direct keys. Best-effort zsh/bash autocomplete returns readable completions to the input box without installing a remote helper.
+- Use direct terminal input on Mac. On iPhone/iPad, choose the native composer or direct keys; best-effort shell completion can return text to the composer without a remote helper.
 - Keep saved connections and key metadata in sync automatically using private CloudKit, with credentials in iCloud Keychain.
 
 Requires **iOS/iPadOS 17 or later** or **macOS 15 or later**, an SSH-accessible host, and **tmux 3.2 or later**. No remote plugin or OpenAI API key is required. This project is independent of OpenAI and the tmux project.
@@ -37,19 +37,18 @@ Sync runs automatically when the app becomes active, after edits, and periodical
 
 ## macOS
 
-[Download Mux Manager for Mac — version 1.0, build 15](https://linquist.com/muxmanager/mac/). The universal app supports Apple Silicon and Intel Macs running **macOS 15 or later**. Unzip it, move **Mux Manager.app** to Applications, and open it.
+[Download Mux Manager for Mac — version 1.0, build 16](https://linquist.com/muxmanager/mac/). The universal app supports Apple Silicon and Intel Macs running **macOS 15 or later**. Unzip it, move **Mux Manager.app** to Applications, and open it.
 
 Open **`MuxManagerMac.xcodeproj`**, select **MuxManagerMac**, and choose My Mac to build from source. It uses the same two direct libraries and pinned versions as iOS. Set your signing team/bundle/container in `Config/Local.xcconfig` as above; enable the same CloudKit container for the Mac App ID. Production downloads use Production CloudKit and the same Keychain access group as the iPhone/iPad release. Sign in to the same Apple Account and enable iCloud Keychain to receive saved connections and credentials. Development and Production databases remain separate.
 
-The native AppKit terminal supports selection, Command-C/Command-V, horizontal panning in Original, and vertical scrollback. Smart uses continuous selectable, colored text that wraps locally; **Fit window** explicitly resizes the remote window. Terminal mode sends keys directly, including Shift-Tab. Mouse input stays local for selection and scrolling; terminal mouse reporting is disabled because this app displays tmux snapshots.
+The native AppKit terminal supports selection, Command-C/Command-V, horizontal panning in Original, and vertical scrollback. Smart uses continuous selectable, colored text that wraps locally; **Fit window** explicitly resizes the remote window. The Mac app is terminal-only: typing, Return, Tab, arrows, and Shift-Tab go directly to the selected shell or TUI. There is no Compose box or Send button. Click unselected Smart output or use Focus terminal to resume typing after selecting text. Mouse input stays local for selection and scrolling; terminal mouse reporting is disabled because this app displays tmux snapshots.
 
 - **Command-N:** add a connection.
 - **Shift-Command-L:** resume Live output.
-- **Shift-Command-T:** switch to Terminal and focus it.
-- **Return:** send Compose; **Shift-Return:** insert a newline.
-- **Up/Down:** command history at the first/last composer line; **Tab:** best-effort shell completion.
+- **Shift-Command-T:** focus the terminal.
+- **Return, Tab, Up/Down, Shift-Tab:** direct terminal keys; shell history and completion run remotely.
 
-Spelling and autocorrect default on in Compose and follow the ABC toggle. Connections and eligible Codex notification checks continue when another app is active. A sleeping Mac cannot monitor remote work. Quit disconnects this app's clients and attempts to restore Fit sizing; remote tmux sessions continue. Cross-device sync and real sleep/network recovery still need acceptance testing on your devices.
+Mac terminal input stays literal; Compose remains available on iPhone/iPad. Connections and eligible Codex notification checks continue when another app is active. A sleeping Mac cannot monitor remote work. Quit disconnects this app's clients and attempts to restore Fit sizing; remote tmux sessions continue. Cross-device sync and real sleep/network recovery still need acceptance testing on your devices.
 
 ```sh
 xcodebuild -project MuxManagerMac.xcodeproj -scheme MuxManagerMac \
@@ -75,6 +74,8 @@ Window selection and input target stable tmux IDs without changing the session's
 Every tmux invocation explicitly enables UTF-8 output with `-u`. Non-interactive SSH sessions may not inherit a UTF-8 locale; without this flag tmux can replace the discovery field separators and Unicode names with underscores. Malformed nonempty discovery output is reported as an error rather than being mistaken for an empty server.
 
 ## Display and input
+
+The following composer and software-keyboard controls apply to iPhone/iPad. Mac always uses direct terminal input, as described above.
 
 | Control | Behavior |
 | --- | --- |
