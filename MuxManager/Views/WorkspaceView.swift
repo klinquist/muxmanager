@@ -27,7 +27,7 @@ struct WorkspaceView: View {
                         if workspace.conversation {
                             ConversationContent(capture: capture, fontSize: workspace.fontSize, follow: $follow, liveToken: liveToken, onSelection: { pauseForSelection(capture) })
                         } else if workspace.displayMode == .smart {
-                            SmartContent(capture: capture, fontSize: workspace.fontSize, follow: $follow, liveToken: liveToken, onSelection: { pauseForSelection(capture) })
+                            SmartContent(capture: capture, fontSize: workspace.fontSize, cursorOffset: workspace.terminalMode && follow && workspace.terminalCursor?.visible == true ? workspace.terminalCursor?.smartOffset : nil, follow: $follow, liveToken: liveToken, onSelection: { pauseForSelection(capture) })
                         } else {
                             TerminalCanvas(workspace: workspace, follow: $follow, liveToken: liveToken)
                         }
@@ -653,6 +653,7 @@ private struct HostTrustView: View {
 private struct SmartContent: View {
     let capture: String
     let fontSize: Double
+    var cursorOffset: Int? = nil
     @Binding var follow: Bool
     let liveToken: Int
     var onSelection: () -> Void
@@ -660,7 +661,7 @@ private struct SmartContent: View {
         BottomFollowingContent(follow: $follow, liveToken: liveToken) {
             // One native text document lets selection span prose, code, tables,
             // and blank lines instead of stopping at a presentation-block boundary.
-            StyledTerminalLabel(text: TerminalCaptureStyle.parse(capture), fontSize: fontSize,
+            StyledTerminalLabel(text: TerminalCaptureStyle.parse(capture), fontSize: fontSize, cursorOffset: cursorOffset,
                                 selectionResetToken: liveToken, onSelection: onSelection)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 14).padding(.top, 14).fixedSize(horizontal: false, vertical: true)

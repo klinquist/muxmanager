@@ -29,7 +29,7 @@ struct MacTerminalCanvas: NSViewRepresentable {
         let font = NSFont.monospacedSystemFont(ofSize: workspace.fontSize, weight: .regular)
         let changed = view.terminal.font.pointSize != font.pointSize || view.columns != workspace.remoteColumns
         if view.terminal.font.pointSize != font.pointSize { view.terminal.font = font }
-        view.columns = workspace.remoteColumns; view.liveRow = workspace.terminalLiveRow
+        view.columns = workspace.remoteColumns; view.rows = workspace.terminalBufferRows; view.liveRow = workspace.terminalLiveRow
         view.layoutTerminal()
         let live = follow || context.coordinator.lastLiveToken != liveToken
         if !inputOnly && ((workspace.snapshotRevision != context.coordinator.revision && live) || context.coordinator.revision < 0 || changed) {
@@ -95,9 +95,14 @@ final class MacPinnedTerminal: TerminalView {
     }
 }
 
+private final class MacTerminalDocument: NSView { override var isFlipped: Bool { true } }
+
 final class MacTerminalScroll: NSScrollView {
     let terminal = MacPinnedTerminal(frame: .zero)
-    var columns = 80, liveRow = 0
+    var columns = 80, rows = 24, liveRow = 0
+    private let document = MacTerminalDocument()
+    private var cellHeight: CGFloat = 1
+    private var topPadding: CGFloat = 0
     var wantsFocus = false
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
@@ -108,14 +113,18 @@ final class MacTerminalScroll: NSScrollView {
     private var eventMonitor: Any?
     private var capture = ""
     private var layingOut = false
+    private var aligningLive = false
+    private var lastScrollY: CGFloat = 0
     init(inputOnly: Bool) {
         self.inputOnly = inputOnly
         super.init(frame: .zero)
         drawsBackground = true; backgroundColor = NSColor(red: 0.035, green: 0.055, blue: 0.07, alpha: 1)
         terminal.nativeBackgroundColor = backgroundColor; terminal.nativeForegroundColor = .white
         terminal.changeScrollback(2200)
-        hasHorizontalScroller = !inputOnly; hasVerticalScroller = false; autohidesScrollers = true
-        documentView = terminal
+        hasHorizontalScroller = !inputOnly; hasVerticalScroller = !inputOnly; autohidesScrollers = true
+        document.addSubview(terminal); documentView = document
+        contentView.postsBoundsChangedNotifications = true
+        NotificationCenter.default.addObserver(self, selector: #selector(clipBoundsChanged), name: NSView.boundsDidChangeNotification, object: contentView)
         if !inputOnly {
             eventMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
                 guard let self, event.window === self.window,
@@ -123,24 +132,33 @@ final class MacTerminalScroll: NSScrollView {
                       hit === self || hit.isDescendant(of: self) else { return event }
                 if abs(event.scrollingDeltaX) > abs(event.scrollingDeltaY), self.terminal.frame.width > self.contentSize.width {
                     let x = min(max(0, self.contentView.bounds.origin.x - event.scrollingDeltaX), self.terminal.frame.width - self.contentSize.width)
-                    self.contentView.scroll(to: NSPoint(x: x, y: 0)); self.reflectScrolledClipView(self.contentView)
+                    self.contentView.scroll(to: NSPoint(x: x, y: self.contentView.bounds.origin.y)); self.reflectScrolledClipView(self.contentView)
                     return nil
                 }
-                if event.scrollingDeltaY != 0 { self.onManualScroll?() }
+                if event.scrollingDeltaY != 0 { self.onManualScroll?(); self.scrollWheel(with: event); return nil }
                 return event
             }
         }
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
-    deinit { if let eventMonitor { NSEvent.removeMonitor(eventMonitor) } }
+    deinit { NotificationCenter.default.removeObserver(self); if let eventMonitor { NSEvent.removeMonitor(eventMonitor) } }
+    @objc private func clipBoundsChanged() {
+        let y = contentView.bounds.origin.y
+        defer { lastScrollY = y }
+        if !layingOut && !aligningLive && abs(y - lastScrollY) > 0.5 { onManualScroll?() }
+    }
     override func layout() { super.layout(); layoutTerminal() }
     func layoutTerminal() {
         guard !layingOut else { return }; layingOut = true; defer { layingOut = false }
         let font = terminal.font
         let width = ("W" as NSString).size(withAttributes: [.font: font]).width
         let height = max(1, ceil(font.ascender - font.descender + font.leading))
-        let rows = inputOnly ? 24 : max(2, Int(contentSize.height / height))
-        let size = NSSize(width: max(contentSize.width, CGFloat(columns) * width + 16), height: max(height * 2, contentSize.height))
+        let rows = inputOnly ? 24 : max(1, self.rows)
+        cellHeight = height
+        topPadding = inputOnly ? 0 : max(0, contentSize.height - CGFloat(liveRow + 1) * height)
+        let size = NSSize(width: max(contentSize.width, CGFloat(columns) * width + 16), height: CGFloat(rows) * height)
+        document.setFrameSize(NSSize(width: size.width, height: max(contentSize.height, size.height + topPadding)))
+        terminal.setFrameOrigin(NSPoint(x: 0, y: topPadding))
         let changed = terminal.pinnedColumns != columns || terminal.pinnedRows != rows || terminal.frame.size != size
         let position = terminal.scrollPosition
         terminal.pinnedColumns = columns; terminal.pinnedRows = rows
@@ -150,11 +168,14 @@ final class MacTerminalScroll: NSScrollView {
     }
     func apply(_ text: String, follow: Bool) {
         let position = terminal.scrollPosition
-        capture = text; terminal.selectNone(); terminal.feed(text: text)
+        capture = text; rows = max(1, text.components(separatedBy: "\r\n").count); layoutTerminal()
+        terminal.selectNone(); terminal.feed(text: text)
         if follow { showLive() } else { terminal.scroll(toPosition: position) }
     }
     func showLive() {
-        terminal.scrollTo(row: max(0, liveRow - terminal.getTerminal().rows + 1))
+        aligningLive = true; defer { aligningLive = false }
+        contentView.scroll(to: NSPoint(x: contentView.bounds.origin.x, y: max(0, topPadding + CGFloat(liveRow + 1) * cellHeight - contentSize.height)))
+        reflectScrolledClipView(contentView)
         terminal.needsDisplay = true
     }
 }

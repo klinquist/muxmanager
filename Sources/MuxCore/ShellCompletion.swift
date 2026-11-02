@@ -43,10 +43,10 @@ public struct ShellCompletionScreen: Equatable, Sendable {
         return text
     }
 
-    private static func width(of text: String) -> Int {
+    static func width(of text: String) -> Int {
         text.reduce(0) { $0 + max(0, width(of: $1)) }
     }
-    private static func width(of character: Character) -> Int {
+    static func width(of character: Character) -> Int {
         let scalars = character.unicodeScalars
         if scalars.contains(where: { $0.value < 32 || $0.value == 127 }) { return -1 }
         if scalars.allSatisfy({ [.nonspacingMark, .enclosingMark, .format].contains($0.properties.generalCategory) }) { return 0 }

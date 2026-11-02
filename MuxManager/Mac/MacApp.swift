@@ -29,6 +29,7 @@ struct MuxManagerMacApp: App {
                         await workspace.validateAutomaticReconnect(); return
                     }
                     #endif
+                    if model.activeWorkspace == nil { model.open(.localMac) }
                     await library.runAutomaticSync()
                 }
                 .onReceive(NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didWakeNotification)) { _ in model.resume() }

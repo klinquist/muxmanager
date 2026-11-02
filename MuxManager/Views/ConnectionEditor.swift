@@ -70,6 +70,6 @@ struct ConnectionEditor: View {
                     }
                 }
             }
-        }.muxFormSheet().sheet(isPresented: $showKeys) { KeyLibraryView() }
+        }.muxConnectionSheet().sheet(isPresented: $showKeys) { KeyLibraryView() }
     }
 }

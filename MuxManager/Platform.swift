@@ -1,4 +1,5 @@
 import SwiftUI
+import MuxCore
 #if os(macOS)
 import AppKit
 #else
@@ -7,6 +8,13 @@ import UIKit
 
 @MainActor
 enum AppPlatform {
+    static func isLocal(_ profile: MuxCore.ConnectionProfile) -> Bool {
+        #if os(macOS)
+        profile.isLocalMac
+        #else
+        false
+        #endif
+    }
     static var isPhone: Bool {
         #if os(iOS)
         UIDevice.current.userInterfaceIdiom == .phone
@@ -60,6 +68,14 @@ extension ToolbarItemPlacement {
 }
 
 extension View {
+    @ViewBuilder func muxConnectionSheet() -> some View {
+        #if os(macOS)
+        frame(minWidth: 700, idealWidth: 740, minHeight: 600, idealHeight: 640)
+        #else
+        self
+        #endif
+    }
+
     @ViewBuilder func muxInlineTitle() -> some View {
         #if os(iOS)
         navigationBarTitleDisplayMode(.inline)

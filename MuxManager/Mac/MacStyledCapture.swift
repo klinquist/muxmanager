@@ -49,6 +49,7 @@ enum MacTerminalStyle {
 struct MacStyledCapture: NSViewRepresentable {
     let capture: String
     let fontSize: Double
+    var cursorOffset: Int? = nil
     @Binding var follow: Bool
     let liveToken: Int
     let onSelection: () -> Void
@@ -62,12 +63,15 @@ struct MacStyledCapture: NSViewRepresentable {
     func updateNSView(_ view: MacReadingScroll, context: Context) {
         context.coordinator.onSelection = onSelection
         view.text.onTerminalFocus = onFocus
+        view.text.terminalCursorOffset = cursorOffset
         view.onManualScroll = { follow = false }
         view.follow = follow
         context.coordinator.updating = true
         defer { context.coordinator.updating = false }
-        let value = MacTerminalStyle.attributed(TerminalCaptureStyle.parse(capture), size: fontSize)
-        if !view.text.attributedString().isEqual(to: value) { view.text.textStorage?.setAttributedString(value) }
+        if context.coordinator.capture != capture || context.coordinator.fontSize != fontSize {
+            view.text.textStorage?.setAttributedString(MacTerminalStyle.attributed(TerminalCaptureStyle.parse(capture), size: fontSize))
+            context.coordinator.capture = capture; context.coordinator.fontSize = fontSize
+        }
         if context.coordinator.lastLiveToken != liveToken { view.follow = true; view.text.setSelectedRange(NSRange(location: 0, length: 0)) }
         context.coordinator.lastLiveToken = liveToken
         view.layoutText()
@@ -75,6 +79,8 @@ struct MacStyledCapture: NSViewRepresentable {
     final class Coordinator: NSObject, NSTextViewDelegate {
         var onSelection: () -> Void = {}
         var updating = false, lastLiveToken = -1
+        var capture: String?
+        var fontSize: Double?
         func textViewDidChangeSelection(_ notification: Notification) {
             if !updating, let view = notification.object as? NSTextView, view.selectedRange().length > 0 { onSelection() }
         }
@@ -89,6 +95,24 @@ private final class MacFlippedDocument: NSView { override var isFlipped: Bool { 
 
 final class MacOutputTextView: NSTextView {
     var onTerminalFocus: (() -> Void)?
+    var terminalCursorOffset: Int? { didSet { needsLayout = true } }
+    private let terminalCaret = CALayer()
+    var terminalCaretRect: NSRect? { terminalCaret.superlayer == nil ? nil : terminalCaret.frame }
+    override func layout() {
+        super.layout()
+        guard let offset = terminalCursorOffset, offset <= (string as NSString).length, let window else { terminalCaret.removeFromSuperlayer(); return }
+        let screen = firstRect(forCharacterRange: NSRange(location: offset, length: 0), actualRange: nil)
+        var rect = convert(window.convertFromScreen(screen), from: nil); rect.size.width = 2
+        guard rect.height > 0 else { return }
+        if terminalCaret.superlayer == nil {
+            wantsLayer = true
+            terminalCaret.backgroundColor = NSColor.systemMint.cgColor; layer?.addSublayer(terminalCaret)
+            let blink = CABasicAnimation(keyPath: "opacity"); blink.fromValue = 1; blink.toValue = 0.25
+            blink.duration = 0.6; blink.autoreverses = true; blink.repeatCount = .infinity
+            terminalCaret.add(blink, forKey: "blink")
+        }
+        CATransaction.begin(); CATransaction.setDisableActions(true); terminalCaret.frame = rect; CATransaction.commit()
+    }
     override func mouseDown(with event: NSEvent) {
         super.mouseDown(with: event)
         if selectedRange().length == 0 && event.clickCount == 1 { onTerminalFocus?() }

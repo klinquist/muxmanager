@@ -48,6 +48,22 @@ enum MacValidation {
         raw.frame.size.width = 800; raw.layoutTerminal()
         checks["localResizePreservesRemoteColumns"] = raw.terminal.getTerminal().cols == 120
         checks["originalRetainsHistory"] = String(data: raw.terminal.getTerminal().getBufferAsData(), encoding: .utf8)?.contains("line 0") == true && String(data: raw.terminal.getTerminal().getBufferAsData(), encoding: .utf8)?.contains("line 249") == true
+        let grid = (0..<90).map { "captured row \($0)" }
+        raw.liveRow = 64
+        raw.apply(TerminalSnapshot.capture(grid: grid, remoteRows: 36, x: 4, y: 10,
+            applicationCursor: false, keypad: false, visible: true), follow: true)
+        checks["originalCursorIncludesHistory"] = raw.terminal.getTerminal().getCursorLocation().y == 64
+        raw.frame.size.height = 400; raw.layoutTerminal()
+        checks["viewportHeightDoesNotMoveCursor"] = raw.terminal.getTerminal().getCursorLocation().y == 64
+        reading.text.setSelectedRange(NSRange(location: 0, length: 0))
+        reading.text.terminalCursorOffset = 10
+        reading.layoutSubtreeIfNeeded(); reading.text.layoutSubtreeIfNeeded()
+        checks["smartCaretDoesNotChangeCopyableText"] = reading.text.string.hasPrefix(longWord) && reading.text.terminalCursorOffset == 10
+        checks["smartCaretIsVisible"] = reading.text.terminalCaretRect.map { $0.height > 0 && $0.width == 2 } == true
+        var paused = false
+        raw.onManualScroll = { paused = true }
+        raw.contentView.scroll(to: .zero)
+        checks["draggingHistoryPausesLive"] = paused
         let sink = KeySink(); raw.terminal.terminalDelegate = sink
         raw.terminal.doCommand(by: #selector(NSResponder.insertBacktab(_:)))
         checks["terminalBackTab"] = sink.data == Data([27, 91, 90])

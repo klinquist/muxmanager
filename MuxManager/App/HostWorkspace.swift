@@ -47,6 +47,8 @@ final class HostWorkspace: ObservableObject, Identifiable {
     @Published private(set) var isSubmittingDraft = false
     @Published private(set) var joinedCapture = ""
     @Published private(set) var terminalCapture = ""
+    @Published private(set) var terminalBufferRows = 24
+    @Published private(set) var terminalCursor: TerminalCursor?
     @Published private(set) var snapshotRevision = 0
     @Published private(set) var inputRevision = 0 {
         didSet { noteAttentionWindowViewed() }
@@ -71,6 +73,15 @@ final class HostWorkspace: ObservableObject, Identifiable {
     private let transport = SSHTransport()
     private var control: ControlChannel?
     private var pollTask: Task<Void, Never>?
+    private var pollWake: AsyncStream<Bool>.Continuation?
+    private final class KeyBatch {
+        var data: Data
+        var sealed = false
+        let generation: UUID
+        let pane: String
+        init(_ data: Data, generation: UUID, pane: String) { self.data = data; self.generation = generation; self.pane = pane }
+    }
+    private var pendingKeys: KeyBatch?
     private var pollingGeneration = UUID()
     private var drafts: [String: String] = [:]
     private var commandHistories: [String: CommandHistory] = [:]
@@ -245,6 +256,17 @@ final class HostWorkspace: ObservableObject, Identifiable {
         """ : joinedCapture
         terminalCapture = "\u{1b}c" + screen.replacingOccurrences(of: "\n", with: "\r\n") + "\u{1b}[?25l"
         terminalLiveRow = screen.components(separatedBy: "\n").count - 1
+        terminalBufferRows = terminalLiveRow + 1
+        if scene.hasPrefix("cursor-") {
+            var grid = (0..<2000).map { "Earlier shell output \($0)" } + Array(repeating: "", count: 36)
+            grid[2010] = "$ echo x"
+            joinedCapture = grid.prefix(2011).joined(separator: "\n")
+            terminalCapture = TerminalSnapshot.capture(grid: grid, remoteRows: 36, x: 8, y: 10, applicationCursor: false, keypad: false, visible: true)
+            terminalBufferRows = grid.count; terminalLiveRow = 2010
+            terminalCursor = TerminalCursor(row: 2010, column: 8, visible: true, smartOffset: joinedCapture.utf16.count)
+            terminalMode = true; directInput = false
+            displayMode = scene == "cursor-original" ? .original : .smart
+        }
         snapshotRevision += 1
     }
     #endif
@@ -812,19 +834,33 @@ final class HostWorkspace: ObservableObject, Identifiable {
             if bytes.count == 1, let first = bytes.first, (64...127).contains(first) { input = Data([first & 0x1f]) }
             controlModifier = false
         }
-        let previous = inputTail
         let generation = connectionGeneration
-        let task = Task { [weak self, input] in
+        // Coalesce only adjacent, unsent keystrokes. Paste remains an ordered
+        // barrier, and a dropped connection never replays a pending batch.
+        if !input.contains(10), let batch = pendingKeys, !batch.sealed, batch.generation == generation, batch.pane == pane {
+            batch.data.append(input)
+            await inputTail?.value
+            return
+        }
+        pendingKeys?.sealed = true
+        let batch = KeyBatch(input, generation: generation, pane: pane)
+        batch.sealed = input.contains(10)
+        pendingKeys = batch
+        let previous = inputTail
+        let task = Task { [weak self] in
             await previous?.value
+            batch.sealed = true
             guard let self, self.connectionGeneration == generation, self.isConnected else { return }
+            let input = batch.data
             do {
                 if input.count > 1, input.contains(10), let text = String(data: input, encoding: .utf8) {
                     try await self.paste(text, pane: pane, submit: false)
                 } else { try await self.send(input, pane: pane) }
-                if input == Data([3]) || input == Data([13]) {
+                if input.contains(3) || input.contains(13) {
                     let pending = self.incompleteCompletions.removeValue(forKey: pane)
-                    if input == Data([13]), let pending, self.draft == pending.draft { self.draft = "" }
+                    if input.contains(13), let pending, self.draft == pending.draft { self.draft = "" }
                 }
+                self.requestSnapshot()
             }
             catch { self.error = "Input was not confirmed. Reconnect and inspect the terminal. \(error.localizedDescription)" }
         }
@@ -840,6 +876,7 @@ final class HostWorkspace: ObservableObject, Identifiable {
               self.connectionIntent == connectionIntent,
               let window = selectedWindow, window.id == windowID else { return }
         inputRevision += 1; controlModifier = false
+        pendingKeys?.sealed = true
         let previous = inputTail
         let generation = connectionGeneration
         let pane = window.paneID
@@ -1086,10 +1123,13 @@ final class HostWorkspace: ObservableObject, Identifiable {
         terminalLiveRow = max(lastTextRow, max(0, grid.count - rows) + y)
         let prose = joined.joined(separator: "\n")
         applicationCursorKeys = fields.count > 4 && fields[4] == "1"
-        let cursorMode = applicationCursorKeys ? "\u{1b}[?1h" : "\u{1b}[?1l"
-        let keypadMode = fields.count > 5 && fields[5] == "1" ? "\u{1b}=" : "\u{1b}>"
-        let visibleCursor = fields.count > 6 && fields[6] == "0" ? "\u{1b}[?25l" : "\u{1b}[?25h"
-        let terminal = "\u{1b}c" + grid.joined(separator: "\r\n") + "\u{1b}[\(y + 1);\(x + 1)H" + cursorMode + keypadMode + visibleCursor
+        let cursorVisible = fields.count <= 6 || fields[6] != "0"
+        let absoluteCursorRow = TerminalSnapshot.cursorRow(gridCount: grid.count, remoteRows: rows, cursorY: y)
+        terminalBufferRows = max(1, grid.count)
+        terminalCursor = TerminalCursor(row: absoluteCursorRow, column: x, visible: cursorVisible,
+            smartOffset: TerminalSnapshot.smartCursorOffset(grid: grid, joined: prose, row: absoluteCursorRow, column: x, columns: cols))
+        let terminal = TerminalSnapshot.capture(grid: grid, remoteRows: rows, x: x, y: y,
+            applicationCursor: applicationCursorKeys, keypad: fields.count > 5 && fields[5] == "1", visible: cursorVisible)
         if terminalCapture != terminal || remoteColumns != cols || remoteRows != rows {
             remoteColumns = cols; remoteRows = rows; terminalCapture = terminal; snapshotRevision += 1
         }
@@ -1206,7 +1246,7 @@ final class HostWorkspace: ObservableObject, Identifiable {
 
     private func handle(_ event: ControlEvent) {
         switch event {
-        case .output(let pane, _): if pane == selectedWindow?.paneID { dirty = true }
+        case .output(let pane, _): if pane == selectedWindow?.paneID { requestSnapshot() }
         case .notification(let message):
             dirty = true
             if !isBackgrounded && (message.hasPrefix("%window-close ") || message.hasPrefix("%unlinked-window-close ")) {
@@ -1234,19 +1274,33 @@ final class HostWorkspace: ObservableObject, Identifiable {
         case .response: break
         }
     }
+    private func requestSnapshot() {
+        dirty = true
+        if !isBackgrounded { pollWake?.yield(true) }
+    }
     private func startPolling() {
         guard !isBackgrounded else { return }
-        pollTask?.cancel()
+        pollTask?.cancel(); pollWake?.finish()
+        let (signals, wake) = AsyncStream<Bool>.makeStream(bufferingPolicy: .bufferingNewest(1))
+        pollWake = wake
         let generation = UUID(); pollingGeneration = generation
         pollTask = Task { [weak self] in
-            var ticks = 0
-            while !Task.isCancelled {
-                do { try await Task.sleep(nanoseconds: 300_000_000) } catch { break }
+            let timer = Task {
+                while !Task.isCancelled {
+                    do { try await Task.sleep(for: .milliseconds(300)) } catch { break }
+                    wake.yield(false)
+                }
+            }
+            defer { timer.cancel(); wake.finish() }
+            var lastDiscovery = ContinuousClock.now
+            var lastRefresh = ContinuousClock.now - .seconds(1)
+            for await interactive in signals {
+                if Task.isCancelled { break }
                 guard let self, self.isConnected, !self.isBackgrounded, self.pollingGeneration == generation else { break }
                 if self.busy { continue }
                 do {
-                    ticks += 1
-                    if ticks % 10 == 0 {
+                    if !interactive && lastDiscovery.duration(to: .now) >= .seconds(3) {
+                        lastDiscovery = .now
                         try await self.discoverSessions(); try await self.discoverWindows()
                         guard !self.isBackgrounded, self.pollingGeneration == generation else { break }
                         if self.displayMode == .fit, let lease = self.lease {
@@ -1261,7 +1315,11 @@ final class HostWorkspace: ObservableObject, Identifiable {
                        self.fittedViewport?.columns != self.viewport.columns || self.displayMode == .fit && self.fittedViewport?.rows != self.viewport.rows {
                         try await self.fitWindow(); try await self.discoverWindows()
                     }
-                    if self.dirty { try await self.refreshSnapshot() }
+                    if self.dirty {
+                        let elapsed = lastRefresh.duration(to: .now)
+                        if elapsed < .milliseconds(30) { try await Task.sleep(for: .milliseconds(30) - elapsed) }
+                        try await self.refreshSnapshot(); lastRefresh = .now
+                    }
                 } catch {
                     if Task.isCancelled { break }
                     guard self.pollingGeneration == generation else { break }
@@ -1333,6 +1391,51 @@ private actor AttentionFixturePeer {
 }
 
 extension HostWorkspace {
+    func validateInteractiveInput() async -> [String: Bool] {
+        configureScreenshot(scene: "mac"); setTerminalMode(true)
+        let peer = AttentionFixturePeer()
+        await peer.allowInput(delay: .milliseconds(100), reject: false)
+        let channel = ControlChannel(writer: { try await peer.write($0) }, onEvent: { _ in })
+        await peer.install(channel); await channel.receive(Data("%begin 0 0 0\n%end 0 0 0\n".utf8))
+        control = channel
+        var checks: [String: Bool] = [:]
+        let first = Task { await self.sendKey(Data("a".utf8)) }
+        try? await Task.sleep(for: .milliseconds(20))
+        var pending: [Task<Void, Never>] = []
+        for letter in "bcdefghij" {
+            pending.append(Task { await self.sendKey(Data(String(letter).utf8)) })
+            try? await Task.sleep(for: .milliseconds(2))
+        }
+        await first.value
+        for task in pending { await task.value }
+        var commands = await peer.commands
+        let keys = commands.filter { $0.hasPrefix("send-keys") }
+        checks["slowLinkCoalescesAdjacentKeys"] = keys.count == 2 && keys[0].hasSuffix("61") && keys[1].hasSuffix("62 63 64 65 66 67 68 69 6a")
+        let x = Task { await self.sendKey(Data("x".utf8)) }
+        try? await Task.sleep(for: .milliseconds(10))
+        let paste = Task { await self.pasteIntoTerminal("paste text", windowID: "@1", connectionIntent: self.connectionIntent) }
+        try? await Task.sleep(for: .milliseconds(10))
+        let y = Task { await self.sendKey(Data("y".utf8)) }
+        await x.value; await paste.value; await y.value
+        commands = await peer.commands
+        let before = commands.firstIndex { $0.hasSuffix("78") }
+        let barrier = commands.firstIndex { $0.hasPrefix("paste-buffer") }
+        let after = commands.firstIndex { $0.hasSuffix("79") }
+        checks["pasteRemainsAnOrderedBarrier"] = before != nil && barrier != nil && after != nil && before! < barrier! && barrier! < after!
+        await peer.allowInput(delay: .zero, reject: false)
+        await peer.screen("%1", "fresh cursor output\n$ zsh")
+        let revision = snapshotRevision
+        startPolling()
+        let began = ContinuousClock.now
+        await sendKey(Data("k".utf8))
+        while snapshotRevision == revision && began.duration(to: .now) < .milliseconds(250) {
+            try? await Task.sleep(for: .milliseconds(5))
+        }
+        checks["typingRefreshesBeforeOldPollingTick"] = snapshotRevision > revision && began.duration(to: .now) < .milliseconds(250)
+        pollTask?.cancel(); pollWake?.finish(); await channel.close(); await peer.install(nil); control = nil
+        return checks
+    }
+
     func validateComposerSend(initialChecks: [String: Bool], pendingChecks: () -> [String: Bool]) async {
         guard LibraryStore.screenshotScene == "compose" else { return }
         var checks = initialChecks

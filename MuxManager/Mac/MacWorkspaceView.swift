@@ -30,6 +30,7 @@ struct WorkspaceView: View {
                         if workspace.displayMode == .smart {
                             MacStyledCapture(capture: heldCapture ?? workspace.joinedCapture,
                                              fontSize: workspace.fontSize,
+                                             cursorOffset: follow && workspace.terminalCursor?.visible == true ? workspace.terminalCursor?.smartOffset : nil,
                                              follow: $follow, liveToken: liveToken,
                                              onSelection: pauseForSelection, onFocus: focusTerminal)
                             if workspace.terminalMode && workspace.directInput {

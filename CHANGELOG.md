@@ -2,6 +2,14 @@
 
 Changes are listed by app version and build number, newest first.
 
+## 1.0 (17) — 2026-11-02
+
+- Fix the Mac Xcode project's local MuxCore package-product reference and its generator.
+- Show a visible cursor in Smart Terminal mode on iPhone, iPad, and Mac. Keep Original/Fit cursor coordinates tied to captured history rather than viewport height.
+- Refresh terminal output promptly after typing/output events. Coalesce adjacent unsent keystrokes on slower connections while preserving paste ordering and reconnect safeguards.
+- Add a built-in, device-only This Mac connection using local tmux and the user's shell, with no SSH server, saved credential, or iCloud connection record. Create a local session when no tmux server is running.
+- Widen the Mac Add/Edit Connection dialog so field labels fit. Keep native scrollback position when panning horizontally and pause Live when scrolling vertically.
+
 ## 1.0 (16) — 2026-11-01 — macOS
 
 - Make the Mac app terminal-only. Remove the Compose input box, Send button, spelling controls, and input-mode switcher. iPhone/iPad keep Compose.

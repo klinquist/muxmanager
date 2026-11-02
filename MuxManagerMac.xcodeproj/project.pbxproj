@@ -35,6 +35,16 @@
 			"isa" = "PBXBuildFile";
 			"fileRef" = "EFFF351D56A85DB082F686D9";
 		};
+		"49E7338D00DA262107490BB5" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "sourcecode.swift";
+			"path" = "MuxManager/Mac/LocalTransport.swift";
+			"sourceTree" = "SOURCE_ROOT";
+		};
+		"46A93AE7633CC36D3673D762" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = "49E7338D00DA262107490BB5";
+		};
 		"5D82F7BDE1649A30A2BF8EA5" = {
 			"isa" = "PBXFileReference";
 			"lastKnownFileType" = "sourcecode.swift";
@@ -206,6 +216,7 @@
 				"0BA65C752DB4827F050E3C81",
 				"B8C079CE9C71822112A78E3A",
 				"EFFF351D56A85DB082F686D9",
+				"49E7338D00DA262107490BB5",
 				"5D82F7BDE1649A30A2BF8EA5",
 				"2C436C2631E11E74E1CCF644",
 				"77F6998DF60C49931D8294D5",
@@ -233,6 +244,7 @@
 				"ABC87EF44C8007B8DAE41952",
 				"F1D8AD513C3474270A6D0D60",
 				"5C7D976DAAC0A4848FC8B75E",
+				"46A93AE7633CC36D3673D762",
 				"FE60B240FFAF8C06F47C997D",
 				"1894422C81B5DC5D701E657A",
 				"39C04C5274C6C2F0F884033D",
@@ -272,6 +284,7 @@
 		};
 		"9609239DBB5EBBD6C74B0829" = {
 			"isa" = "XCSwiftPackageProductDependency";
+			"package" = "7E97C10E662E74E3F0D64AFD";
 			"productName" = "MuxCore";
 		};
 		"63263BD46A1954567BD74A0A" = {
@@ -533,7 +546,7 @@
 								"enabled" = 1;
 							};
 							"com.apple.Sandbox" = {
-								"enabled" = 1;
+								"enabled" = 0;
 							};
 						};
 					};

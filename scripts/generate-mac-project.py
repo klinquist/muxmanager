@@ -36,7 +36,7 @@ group = add('main', 'PBXGroup', children=refs + [assets, notices, config, produc
 source = add('sources', 'PBXSourcesBuildPhase', buildActionMask=2147483647, files=build, runOnlyForDeploymentPostprocessing=0)
 resource = add('resources', 'PBXResourcesBuildPhase', buildActionMask=2147483647, files=[add('assets-build', 'PBXBuildFile', fileRef=assets), add('notices-build', 'PBXBuildFile', fileRef=notices)], runOnlyForDeploymentPostprocessing=0)
 packages = [add('core', 'XCLocalSwiftPackageReference', relativePath='.')]
-deps = [add('core-dep', 'XCSwiftPackageProductDependency', productName='MuxCore')]
+deps = [add('core-dep', 'XCSwiftPackageProductDependency', package=packages[0], productName='MuxCore')]
 for name, url, version in [('Citadel', 'https://github.com/orlandos-nl/Citadel.git', '0.12.1'), ('SwiftTerm', 'https://github.com/migueldeicaza/SwiftTerm.git', '1.19.0')]:
     p = add(name, 'XCRemoteSwiftPackageReference', repositoryURL=url, requirement={'kind': 'exactVersion', 'version': version})
     packages.append(p)
@@ -68,7 +68,7 @@ for name in ['Debug', 'Release']:
 test_config = add('mac-tests-configs', 'XCConfigurationList', buildConfigurations=test_config_ids, defaultConfigurationIsVisible=0, defaultConfigurationName='Release')
 test_dependency = add('mac-tests-dependency', 'PBXTargetDependency', target=target)
 test_target = add('mac-tests-target', 'PBXNativeTarget', buildConfigurationList=test_config, buildPhases=[test_sources], buildRules=[], dependencies=[test_dependency], name='MuxManagerMacTests', productName='MuxManagerMacTests', productReference=test_product, productType='com.apple.product-type.bundle.unit-test')
-project = add('project', 'PBXProject', attributes={'BuildIndependentTargetsInParallel': 'YES', 'LastUpgradeCheck': '2710', 'TargetAttributes': {target: {'CreatedOnToolsVersion': '27.1', 'SystemCapabilities': {'com.apple.iCloud': {'enabled': 1}, 'com.apple.Sandbox': {'enabled': 1}}}}}, buildConfigurationList=configs('project', False), compatibilityVersion='Xcode 15.0', developmentRegion='en', hasScannedForEncodings=0, knownRegions=['en', 'Base'], mainGroup=group, packageReferences=packages, productRefGroup=products, projectDirPath='', projectRoot='', targets=[target, test_target])
+project = add('project', 'PBXProject', attributes={'BuildIndependentTargetsInParallel': 'YES', 'LastUpgradeCheck': '2710', 'TargetAttributes': {target: {'CreatedOnToolsVersion': '27.1', 'SystemCapabilities': {'com.apple.iCloud': {'enabled': 1}, 'com.apple.Sandbox': {'enabled': 0}}}}}, buildConfigurationList=configs('project', False), compatibilityVersion='Xcode 15.0', developmentRegion='en', hasScannedForEncodings=0, knownRegions=['en', 'Base'], mainGroup=group, packageReferences=packages, productRefGroup=products, projectDirPath='', projectRoot='', targets=[target, test_target])
 dir = root / 'MuxManagerMac.xcodeproj'
 dir.mkdir(exist_ok=True)
 (dir / 'project.pbxproj').write_text('// !$*UTF8*$!\n' + ser({'archiveVersion': 1, 'classes': {}, 'objectVersion': 60, 'objects': o, 'rootObject': project}) + '\n')

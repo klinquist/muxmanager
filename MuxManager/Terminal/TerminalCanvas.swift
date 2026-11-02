@@ -25,8 +25,8 @@ struct TerminalCanvas: UIViewRepresentable {
         return view
     }
     func updateUIView(_ view: TerminalContainer, context: Context) {
-        let dimensionsChanged = view.columns != workspace.remoteColumns || view.rows != workspace.remoteRows
-        view.columns = workspace.remoteColumns; view.rows = workspace.remoteRows
+        let dimensionsChanged = view.columns != workspace.remoteColumns || view.rows != workspace.terminalBufferRows
+        view.columns = workspace.remoteColumns; view.rows = workspace.terminalBufferRows
         view.liveRow = workspace.terminalLiveRow
         view.followLive = follow
         view.onManualScroll = { follow = false }
@@ -184,6 +184,7 @@ final class PinnedTerminalView: TerminalView {
     private let readOnlyInput = UIView(frame: .zero)
     var onSelection: (() -> Void)?
     var afterLayout: (() -> Void)?
+    var afterResize: (() -> Void)?
     var manualOffsetChanged: ((CGPoint) -> Void)?
     override var contentOffset: CGPoint {
         didSet {
@@ -202,7 +203,7 @@ final class PinnedTerminalView: TerminalView {
     override func layoutSubviews() {
         super.layoutSubviews()
         let model = getTerminal()
-        if model.cols != pinnedColumns || model.rows != pinnedRows { resize(cols: pinnedColumns, rows: pinnedRows) }
+        if model.cols != pinnedColumns || model.rows != pinnedRows { resize(cols: pinnedColumns, rows: pinnedRows); afterResize?() }
         afterLayout?()
     }
 }
@@ -226,6 +227,7 @@ final class TerminalContainer: UIView {
     var onManualScroll: (() -> Void)?
     private var readingOffset: CGPoint?
     private var applyingSnapshot = false
+    private var displayedCapture = ""
     private var aligningLive = false
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -245,6 +247,10 @@ final class TerminalContainer: UIView {
             self.onManualScroll?()
         }
         terminal.afterLayout = { [weak self] in self?.pinLiveOffset() }
+        terminal.afterResize = { [weak self] in
+            guard let self, !self.applyingSnapshot, !self.displayedCapture.isEmpty else { return }
+            self.applySnapshot(self.displayedCapture)
+        }
         terminal.manualOffsetChanged = { [weak self] offset in
             guard let self, !self.applyingSnapshot, !self.aligningLive else { return }
             // Observe actual vertical movement. A pan's initial velocity can be
@@ -289,6 +295,7 @@ final class TerminalContainer: UIView {
         }
     }
     func applySnapshot(_ capture: String) {
+        displayedCapture = capture
         let offset = terminal.contentOffset
         let position = terminal.scrollPosition
         applyingSnapshot = true
@@ -339,6 +346,25 @@ final class HorizontalTerminalScrollView: UIScrollView {
 /// Handle short link taps explicitly inside the surrounding reading scroller.
 final class TerminalLinkTextView: UITextView, UIGestureRecognizerDelegate {
     var onOpenWebURL: (URL) -> Void = { TerminalWebBrowser.open($0) }
+    var terminalCursorOffset: Int? { didSet { setNeedsLayout() } }
+    private let terminalCaret = CALayer()
+    var terminalCaretRect: CGRect? { terminalCaret.superlayer == nil ? nil : terminalCaret.frame }
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        guard let offset = terminalCursorOffset, offset <= (text as NSString).length,
+              let position = position(from: beginningOfDocument, offset: offset) else { terminalCaret.removeFromSuperlayer(); return }
+        var rect = caretRect(for: position)
+        rect.size.width = 2
+        guard rect.height > 0 else { return }
+        if terminalCaret.superlayer == nil {
+            terminalCaret.backgroundColor = UIColor.systemMint.cgColor
+            layer.addSublayer(terminalCaret)
+            let blink = CABasicAnimation(keyPath: "opacity"); blink.fromValue = 1; blink.toValue = 0.25
+            blink.duration = 0.6; blink.autoreverses = true; blink.repeatCount = .infinity
+            terminalCaret.add(blink, forKey: "blink")
+        }
+        CATransaction.begin(); CATransaction.setDisableActions(true); terminalCaret.frame = rect; CATransaction.commit()
+    }
     private var webLinkTap: UITapGestureRecognizer?
     override func didMoveToWindow() {
         super.didMoveToWindow()
@@ -393,6 +419,7 @@ struct StyledTerminalLabel: UIViewRepresentable {
     let text: StyledTerminalText
     let fontSize: Double
     var wraps = true
+    var cursorOffset: Int? = nil
     var selectionResetToken = 0
     var onSelection: () -> Void = {}
     func makeCoordinator() -> Coordinator { Coordinator() }
@@ -419,6 +446,7 @@ struct StyledTerminalLabel: UIViewRepresentable {
         let value = attributedText()
         if !view.attributedText.isEqual(to: value) { view.attributedText = value }
         view.textContainer.lineBreakMode = wraps ? .byWordWrapping : .byClipping
+        (view as? TerminalLinkTextView)?.terminalCursorOffset = cursorOffset
     }
     final class Coordinator: NSObject, UITextViewDelegate {
         var onOpenURL: (URL) -> Void = { TerminalWebBrowser.open($0) }
@@ -860,6 +888,35 @@ enum CopySelectionValidation {
             checks["foregroundClearsSelection"] = current?.selectedRange.length == 0
             write("complete")
             return
+        }
+    }
+}
+#endif
+
+#if DEBUG
+@MainActor
+enum CursorValidation {
+    static func writeReport() {
+        func views(_ view: UIView) -> [UIView] { [view] + view.subviews.flatMap(views) }
+        let all = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.flatMap { $0.windows }.flatMap(views)
+        var checks: [String: Bool] = [:]
+        if LibraryStore.screenshotScene == "cursor-smart", let text = all.compactMap({ $0 as? TerminalLinkTextView }).first {
+            text.layoutIfNeeded()
+            checks["smartCursorHasVisibleNativeRect"] = text.terminalCaretRect.map { $0.height > 0 && $0.width == 2 } == true
+            checks["cursorDoesNotAlterCopyableText"] = text.text.hasSuffix("$ echo x") && text.terminalCursorOffset == (text.text as NSString).length
+        }
+        if LibraryStore.screenshotScene == "cursor-original", let view = all.compactMap({ $0 as? TerminalContainer }).first {
+            let model = view.terminal.getTerminal()
+            checks["cursorOnCapturedRow"] = model.getCursorLocation().y == 2010 && model.getCursorLocation().x == 8
+            checks["localBufferRetainsEveryCapturedRow"] = model.rows == 2036 && model.cols == 120
+            let width = view.bounds.width
+            view.bounds.size.width = max(180, width - 100); view.setNeedsLayout(); view.layoutIfNeeded()
+            checks["viewportResizeKeepsCursorOnSameRow"] = model.getCursorLocation().y == 2010
+            view.bounds.size.width = width; view.setNeedsLayout(); view.layoutIfNeeded()
+        }
+        let report: [String: Any] = ["checks": checks, "passed": !checks.isEmpty && checks.values.allSatisfy { $0 }]
+        if let data = try? JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys]) {
+            try? data.write(to: FileManager.default.temporaryDirectory.appendingPathComponent("mux-cursor-report.json"))
         }
     }
 }

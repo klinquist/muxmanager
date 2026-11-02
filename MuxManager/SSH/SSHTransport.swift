@@ -85,7 +85,15 @@ enum SSHKeys {
 final class SSHTransport {
     var diagnostic: ((String) -> Void)?
     var onDisconnect: (() -> Void)?
-    var isConnected: Bool { client?.isConnected == true }
+    #if os(macOS)
+    private var local: LocalTransport?
+    #endif
+    var isConnected: Bool {
+        #if os(macOS)
+        if let local { return local.isConnected }
+        #endif
+        return client?.isConnected == true
+    }
     private var connectionGeneration = UUID()
     private var client: SSHClient?
     private var jump: SSHClient?
@@ -98,6 +106,14 @@ final class SSHTransport {
                  onProgress: (String) -> Void,
                  onChallenge: @escaping @Sendable (HostKeyChallenge) -> Void) async throws {
         let generation = UUID(); connectionGeneration = generation
+        #if os(macOS)
+        if profile.isLocalMac {
+            let local = LocalTransport(); self.local = local; local.diagnostic = diagnostic
+            do { try await local.connect(onProgress: onProgress); tmuxPath = local.tmuxPath }
+            catch { await disconnect(); throw error }
+            return
+        }
+        #endif
         onProgress("Preparing SSH credentials…")
         try profile.validate(in: library.profiles)
         diagnostic?("Target \(profile.name): \(profile.username)@\(profile.hostname):\(profile.port); authentication=\(profile.authentication.rawValue)")
@@ -203,6 +219,9 @@ final class SSHTransport {
     }
 
     func execute(_ command: String) async throws -> String {
+        #if os(macOS)
+        if let local { return try await local.execute(command) }
+        #endif
         guard let client else { throw MuxError.message("Connect to the host first.") }
         var stdout = Data(), stderr = Data()
         do {
@@ -220,12 +239,18 @@ final class SSHTransport {
         return String(decoding: stdout, as: UTF8.self)
     }
     func tmux(_ arguments: String) async throws -> String {
-        try await execute(TmuxCommand.invocation(executable: tmuxPath, arguments: arguments))
+        #if os(macOS)
+        if let local { return try await local.tmux(arguments) }
+        #endif
+        return try await execute(TmuxCommand.invocation(executable: tmuxPath, arguments: arguments))
     }
 
     func startControl(session: String, events: @escaping @Sendable (ControlEvent) -> Void,
                       closed: @escaping @Sendable (String) -> Void) async throws -> ControlChannel {
         await stopControl()
+        #if os(macOS)
+        if let local { return try await local.startControl(session: session, events: events, closed: closed) }
+        #endif
         guard let client else { throw MuxError.message("Connect first.") }
         let command = "exec " + TmuxCommand.invocation(executable: tmuxPath, arguments: try TmuxCommand.attach(session: session))
         diagnostic?("Opening tmux control mode: \(command)")
@@ -267,11 +292,17 @@ final class SSHTransport {
     }
 
     func stopControl() async {
+        #if os(macOS)
+        await local?.stopControl()
+        #endif
         controlGeneration = UUID()
         if let channel { await channel.close() }
         streamTask?.cancel(); streamTask = nil; channel = nil
     }
     func disconnect() async {
+        #if os(macOS)
+        await local?.disconnect(); local = nil
+        #endif
         connectionGeneration = UUID()
         await stopControl()
         if let client { try? await client.close() }

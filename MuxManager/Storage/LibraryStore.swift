@@ -34,7 +34,7 @@ final class LibraryStore: ObservableObject {
         // A Debug-only fixture entry point for native launchers that do not pass arguments.
         value = value ?? Bundle.main.object(forInfoDictionaryKey: "MuxValidationScene") as? String
         #endif
-        return ["hosts", "smart", "original", "fit", "connection", "preview", "shell", "history", "history-original", "connecting", "connecting-hosts", "copy", "copy-original", "copy-conversation", "input", "input-original", "attention", "links", "reconnect", "compose", "mac", "mac-tests"].contains(value ?? "") ? value : nil
+        return ["hosts", "smart", "original", "fit", "connection", "preview", "shell", "history", "history-original", "connecting", "connecting-hosts", "copy", "copy-original", "copy-conversation", "input", "input-original", "attention", "links", "reconnect", "compose", "mac", "mac-tests", "cursor-smart", "cursor-original"].contains(value ?? "") ? value : nil
     }
     #endif
 
@@ -61,6 +61,18 @@ final class LibraryStore: ObservableObject {
             .appendingPathComponent("MuxManager", isDirectory: true)
         do {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            #if os(macOS)
+            // Developer ID builds used a sandbox before local terminals were supported.
+            // Preserve their device-local library/settings when adopting normal Mac storage.
+            let previous = FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent("Library/Containers/" + (Bundle.main.bundleIdentifier ?? "com.linquist.muxmanager") + "/Data/Library/Application Support/MuxManager")
+            if previous != directory, let files = try? FileManager.default.contentsOfDirectory(at: previous, includingPropertiesForKeys: nil) {
+                for source in files where source.pathExtension == "json" {
+                    let target = directory.appendingPathComponent(source.lastPathComponent)
+                    if !FileManager.default.fileExists(atPath: target.path) { try? FileManager.default.copyItem(at: source, to: target) }
+                }
+            }
+            #endif
             let file = directory.appendingPathComponent("library.json")
             if FileManager.default.fileExists(atPath: file.path) {
                 let library = try JSONDecoder().decode(Library.self, from: Data(contentsOf: file))
@@ -93,6 +105,9 @@ final class LibraryStore: ObservableObject {
     }
 
     func save(_ profile: ConnectionProfile, password: String?) throws {
+        #if os(macOS)
+        guard !profile.isLocalMac else { throw MuxError.message("This Mac is a built-in local connection and is never synced.") }
+        #endif
         try profile.validate(in: profiles)
         if let password { try secrets.write(Data(password.utf8), account: "password:\(profile.id)") }
         var updated = profile; updated.modifiedAt = Date()

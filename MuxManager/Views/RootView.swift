@@ -17,16 +17,16 @@ struct RootView: View {
         NavigationSplitView(columnVisibility: $visibility, preferredCompactColumn: $preferredColumn) {
             List {
                 Section {
-                    ForEach(library.visibleProfiles) { profile in
+                    ForEach(model.connectionProfiles) { profile in
                       VStack(alignment: .leading, spacing: 6) {
                         HStack(spacing: 12) {
                             Button { model.open(profile) } label: {
                               HStack(spacing: 12) {
-                                Image(systemName: profile.bastionID == nil ? "server.rack" : "point.3.connected.trianglepath.dotted")
+                                Image(systemName: AppPlatform.isLocal(profile) ? "desktopcomputer" : (profile.bastionID == nil ? "server.rack" : "point.3.connected.trianglepath.dotted"))
                                     .foregroundStyle(.mint)
                                 VStack(alignment: .leading, spacing: 3) {
                                     Text(profile.name).font(.headline).foregroundStyle(.primary)
-                                    Text("\(profile.username)@\(profile.hostname)").font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                                    Text(AppPlatform.isLocal(profile) ? "Local shell · \(profile.username)" : "\(profile.username)@\(profile.hostname)").font(.caption).foregroundStyle(.secondary).lineLimit(1)
                                 }
                               }.frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 4)
                             }.buttonStyle(.plain)
@@ -42,15 +42,19 @@ struct RootView: View {
                         }
                       }
                         .contextMenu {
-                            Button("Edit connection", systemImage: "pencil") { editingProfile = profile }
+                            if !AppPlatform.isLocal(profile) {
+                                Button("Edit connection", systemImage: "pencil") { editingProfile = profile }
+                            }
                             Button("Disconnect", systemImage: "network.slash") { Task { await model.workspaces[profile.id]?.disconnect() } }
                             Button("Connection diagnostics", systemImage: "stethoscope") { diagnosticWorkspace = model.workspaces[profile.id] }
                                 .disabled(model.workspaces[profile.id] == nil)
+                            if !AppPlatform.isLocal(profile) {
                             Button("Delete connection", systemImage: "trash", role: .destructive) {
                                 Task {
                                     await model.workspaces[profile.id]?.disconnect()
                                     do { try library.remove(profile) } catch { library.error = error.localizedDescription }
                                 }
+                            }
                             }
                         }
                     }
@@ -88,7 +92,7 @@ struct RootView: View {
                 }
             }
             .overlay {
-                if library.visibleProfiles.isEmpty {
+                if model.connectionProfiles.isEmpty {
                     ContentUnavailableView {
                         Label("Your windows, anywhere", systemImage: "terminal")
                     } description: {
@@ -122,6 +126,10 @@ struct RootView: View {
                     if AppPlatform.isPhone { visibility = .detailOnly }
                 }
                 #if os(iOS)
+                if scene.hasPrefix("cursor-") {
+                    try? await Task.sleep(for: .seconds(2))
+                    CursorValidation.writeReport()
+                }
                 if scene.hasPrefix("history") {
                     try? await Task.sleep(nanoseconds: 2_000_000_000)
                     HistoryScrollValidation.writeReport()

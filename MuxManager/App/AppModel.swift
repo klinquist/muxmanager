@@ -49,6 +49,13 @@ final class AppModel: ObservableObject {
         }
         #endif
     }
+    var connectionProfiles: [ConnectionProfile] {
+        #if os(macOS)
+        return [.localMac] + library.visibleProfiles
+        #else
+        return library.visibleProfiles
+        #endif
+    }
     var activeWorkspace: HostWorkspace? { activeHostID.flatMap { workspaces[$0] } }
 
     func open(_ profile: ConnectionProfile) {
@@ -73,14 +80,14 @@ final class AppModel: ObservableObject {
     }
     private func configureNotifications(_ workspace: HostWorkspace) {
         workspace.configureAttention(enabled: notifications.enabled) { [weak self, weak workspace] pane, state in
-            guard let self, let workspace, self.library.visibleProfiles.contains(where: { $0.id == workspace.id }) else { return }
+            guard let self, let workspace, self.connectionProfiles.contains(where: { $0.id == workspace.id }) else { return }
             Task { await self.notifications.post(hostName: workspace.profile.name, pane: pane, state: state, hostID: workspace.id) }
         }
     }
     func cancelNotificationNavigation() { notificationNavigationRequest = UUID() }
 
     private func openNotification(_ target: CodexNotificationTarget) {
-        guard let profile = library.visibleProfiles.first(where: { $0.id == target.hostID }) else {
+        guard let profile = connectionProfiles.first(where: { $0.id == target.hostID }) else {
             library.error = "The connection for this notification is no longer saved."; return
         }
         let request = UUID(); notificationNavigationRequest = request
