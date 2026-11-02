@@ -54,11 +54,13 @@ enum MacValidation {
             applicationCursor: false, keypad: false, visible: true), follow: true)
         checks["originalCursorIncludesHistory"] = raw.terminal.getTerminal().getCursorLocation().y == 64
         raw.frame.size.height = 400; raw.layoutTerminal()
+        checks["macTerminalCursorIsSolid"] = raw.terminal.getTerminal().options.cursorStyle.tagName == "steadyBlock"
         checks["viewportHeightDoesNotMoveCursor"] = raw.terminal.getTerminal().getCursorLocation().y == 64
         reading.text.setSelectedRange(NSRange(location: 0, length: 0))
         reading.text.terminalCursorOffset = 10
         reading.layoutSubtreeIfNeeded(); reading.text.layoutSubtreeIfNeeded()
         checks["smartCaretDoesNotChangeCopyableText"] = reading.text.string.hasPrefix(longWord) && reading.text.terminalCursorOffset == 10
+        checks["macSmartCursorIsSolid"] = reading.text.terminalCaretIsSolid
         checks["smartCaretIsVisible"] = reading.text.terminalCaretRect.map { $0.height > 0 && $0.width == 2 } == true
         var paused = false
         raw.onManualScroll = { paused = true }

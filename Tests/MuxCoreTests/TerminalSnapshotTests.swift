@@ -20,7 +20,16 @@ final class TerminalSnapshotTests: XCTestCase {
     }
     func testSmartCursorAcrossSoftWrapAndExplicitNewlines() {
         XCTAssertEqual(TerminalSnapshot.smartCursorOffset(grid: ["abcdefgh", "ijk", "", "$ hi"], joined: "abcdefghijk\n\n$ hi", row: 3, column: 4, columns: 8), 17)
-        XCTAssertEqual(TerminalSnapshot.smartCursorOffset(grid: ["abc", "def"], joined: "abc     def", row: 1, column: 2, columns: 8), 10)
+        XCTAssertEqual(TerminalSnapshot.smartCursorOffset(grid: ["abc     ", "def"], joined: "abc     def", row: 1, column: 2, columns: 8), 10)
+    }
+    func testPromptTrailingSpacesAndEmptyCursorLine() {
+        XCTAssertEqual(TerminalSnapshot.smartCursorOffset(grid: ["$ "], joined: "$ ", row: 0, column: 2, columns: 80), 2)
+        XCTAssertEqual(TerminalSnapshot.smartCursorOffset(grid: ["output  ", "$ echo "], joined: "output  \n$ echo ", row: 1, column: 7, columns: 80), 16)
+        let lines = ["output", "", "", ""]
+        let offset = TerminalSnapshot.smartCursorOffset(grid: lines, joined: lines.joined(separator: "\n"), row: 1, column: 0, columns: 80)
+        XCTAssertEqual(offset, 7)
+        XCTAssertEqual(TerminalSnapshot.trimmingBlankLines(lines, keepingCursorAt: offset), "output\n")
+        XCTAssertEqual(TerminalSnapshot.trimmingBlankLines(lines, keepingCursorAt: nil), "output")
     }
     func testUnicodeCellsAndCaptureMismatch() {
         XCTAssertEqual(TerminalSnapshot.smartCursorOffset(grid: ["$ 界🙂a"], joined: "$ 界🙂a", row: 0, column: 6, columns: 80), 5)

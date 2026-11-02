@@ -37,7 +37,7 @@ Sync runs automatically when the app becomes active, after edits, and periodical
 
 ## macOS
 
-[Download Mux Manager for Mac — version 1.0, build 17](https://linquist.com/muxmanager/mac/). The universal app supports Apple Silicon and Intel Macs running **macOS 15 or later**. Unzip it, move **Mux Manager.app** to Applications, and open it.
+[Download Mux Manager for Mac — version 1.0, build 18](https://linquist.com/muxmanager/mac/). The universal app supports Apple Silicon and Intel Macs running **macOS 15 or later**. Unzip it, move **Mux Manager.app** to Applications, and open it.
 
 Open **`MuxManagerMac.xcodeproj`**, select **MuxManagerMac**, and choose My Mac to build from source. It uses the same two direct libraries and pinned versions as iOS. Set your signing team/bundle/container in `Config/Local.xcconfig` as above; enable the same CloudKit container for the Mac App ID. Production downloads use Production CloudKit and the same Keychain access group as the iPhone/iPad release. Sign in to the same Apple Account and enable iCloud Keychain to receive saved connections and credentials. Development and Production databases remain separate.
 

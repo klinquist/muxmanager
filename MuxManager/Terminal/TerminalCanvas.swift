@@ -903,11 +903,11 @@ enum CursorValidation {
         if LibraryStore.screenshotScene == "cursor-smart", let text = all.compactMap({ $0 as? TerminalLinkTextView }).first {
             text.layoutIfNeeded()
             checks["smartCursorHasVisibleNativeRect"] = text.terminalCaretRect.map { $0.height > 0 && $0.width == 2 } == true
-            checks["cursorDoesNotAlterCopyableText"] = text.text.hasSuffix("$ echo x") && text.terminalCursorOffset == (text.text as NSString).length
+            checks["cursorDoesNotAlterCopyableText"] = text.text.hasSuffix("$ ") && text.terminalCursorOffset == (text.text as NSString).length
         }
         if LibraryStore.screenshotScene == "cursor-original", let view = all.compactMap({ $0 as? TerminalContainer }).first {
             let model = view.terminal.getTerminal()
-            checks["cursorOnCapturedRow"] = model.getCursorLocation().y == 2010 && model.getCursorLocation().x == 8
+            checks["cursorOnCapturedRow"] = model.getCursorLocation().y == 2010 && model.getCursorLocation().x == 2
             checks["localBufferRetainsEveryCapturedRow"] = model.rows == 2036 && model.cols == 120
             let width = view.bounds.width
             view.bounds.size.width = max(180, width - 100); view.setNeedsLayout(); view.layoutIfNeeded()

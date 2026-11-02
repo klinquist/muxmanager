@@ -97,6 +97,7 @@ final class MacOutputTextView: NSTextView {
     var onTerminalFocus: (() -> Void)?
     var terminalCursorOffset: Int? { didSet { needsLayout = true } }
     private let terminalCaret = CALayer()
+    var terminalCaretIsSolid: Bool { terminalCaret.animationKeys()?.isEmpty ?? true }
     var terminalCaretRect: NSRect? { terminalCaret.superlayer == nil ? nil : terminalCaret.frame }
     override func layout() {
         super.layout()
@@ -107,9 +108,7 @@ final class MacOutputTextView: NSTextView {
         if terminalCaret.superlayer == nil {
             wantsLayer = true
             terminalCaret.backgroundColor = NSColor.systemMint.cgColor; layer?.addSublayer(terminalCaret)
-            let blink = CABasicAnimation(keyPath: "opacity"); blink.fromValue = 1; blink.toValue = 0.25
-            blink.duration = 0.6; blink.autoreverses = true; blink.repeatCount = .infinity
-            terminalCaret.add(blink, forKey: "blink")
+
         }
         CATransaction.begin(); CATransaction.setDisableActions(true); terminalCaret.frame = rect; CATransaction.commit()
     }
@@ -162,7 +161,7 @@ final class MacReadingScroll: NSScrollView {
         text.textContainer?.containerSize = NSSize(width: max(1, width - 24), height: .greatestFiniteMagnitude)
         if let manager = text.layoutManager, let container = text.textContainer {
             manager.ensureLayout(for: container)
-            let height = ceil(manager.usedRect(for: container).height) + 24
+            let height = ceil(max(manager.usedRect(for: container).height, manager.extraLineFragmentRect.maxY)) + 24
             document.setFrameSize(NSSize(width: width, height: max(contentSize.height, height)))
             text.setFrameOrigin(NSPoint(x: 0, y: max(0, contentSize.height - height)))
             text.setFrameSize(NSSize(width: width, height: height))

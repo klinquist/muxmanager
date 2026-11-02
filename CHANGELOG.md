@@ -2,6 +2,11 @@
 
 Changes are listed by app version and build number, newest first.
 
+## 1.0 (18) — 2026-11-02
+
+- Use steady cursors throughout the Mac app, without pulsing. Keep the Smart cursor tied to held screen content when Live is paused.
+- Preserve written trailing spaces when mapping the Smart cursor, including the space after an empty shell prompt. Keep a blank cursor line visible while trimming unused rows below it.
+
 ## 1.0 (17) — 2026-11-02
 
 - Fix the Mac Xcode project's local MuxCore package-product reference and its generator.

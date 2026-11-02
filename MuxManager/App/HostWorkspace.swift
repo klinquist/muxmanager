@@ -259,11 +259,11 @@ final class HostWorkspace: ObservableObject, Identifiable {
         terminalBufferRows = terminalLiveRow + 1
         if scene.hasPrefix("cursor-") {
             var grid = (0..<2000).map { "Earlier shell output \($0)" } + Array(repeating: "", count: 36)
-            grid[2010] = "$ echo x"
+            grid[2010] = "$ "
             joinedCapture = grid.prefix(2011).joined(separator: "\n")
-            terminalCapture = TerminalSnapshot.capture(grid: grid, remoteRows: 36, x: 8, y: 10, applicationCursor: false, keypad: false, visible: true)
+            terminalCapture = TerminalSnapshot.capture(grid: grid, remoteRows: 36, x: 2, y: 10, applicationCursor: false, keypad: false, visible: true)
             terminalBufferRows = grid.count; terminalLiveRow = 2010
-            terminalCursor = TerminalCursor(row: 2010, column: 8, visible: true, smartOffset: joinedCapture.utf16.count)
+            terminalCursor = TerminalCursor(row: 2010, column: 2, visible: true, smartOffset: joinedCapture.utf16.count)
             terminalMode = true; directInput = false
             displayMode = scene == "cursor-original" ? .original : .smart
         }
@@ -1106,8 +1106,7 @@ final class HostWorkspace: ObservableObject, Identifiable {
         let fields = metadata.joined().split(separator: " ")
         guard fields.count >= 4, let cols = Int(fields[0]), let rows = Int(fields[1]),
               let x = Int(fields[2]), let y = Int(fields[3]) else { return }
-        var joined = try await command(TmuxCommand.capture(pane: pane, joined: true, colors: true))
-        while let last = joined.last, TerminalCaptureStyle.parse(last).text.trimmingCharacters(in: .whitespaces).isEmpty { joined.removeLast() }
+        let joined = try await command(TmuxCommand.capture(pane: pane, joined: true, colors: true))
         let grid = try await command(TmuxCommand.capture(pane: pane, joined: false, colors: true))
         guard generation == connectionGeneration, pane == selectedWindow?.paneID else { dirty = true; return }
         let historySize = fields.count > 7 ? Int(fields[7]) : nil
@@ -1121,13 +1120,14 @@ final class HostWorkspace: ObservableObject, Identifiable {
         var lastTextRow = max(0, grid.count - 1)
         while lastTextRow > 0 && TerminalCaptureStyle.parse(grid[lastTextRow]).text.trimmingCharacters(in: .whitespaces).isEmpty { lastTextRow -= 1 }
         terminalLiveRow = max(lastTextRow, max(0, grid.count - rows) + y)
-        let prose = joined.joined(separator: "\n")
+        let absoluteCursorRow = TerminalSnapshot.cursorRow(gridCount: grid.count, remoteRows: rows, cursorY: y)
+        let smartOffset = TerminalSnapshot.smartCursorOffset(grid: grid, joined: joined.joined(separator: "\n"), row: absoluteCursorRow, column: x, columns: cols)
+        let prose = TerminalSnapshot.trimmingBlankLines(joined, keepingCursorAt: fields.count > 6 && fields[6] == "0" ? nil : smartOffset)
         applicationCursorKeys = fields.count > 4 && fields[4] == "1"
         let cursorVisible = fields.count <= 6 || fields[6] != "0"
-        let absoluteCursorRow = TerminalSnapshot.cursorRow(gridCount: grid.count, remoteRows: rows, cursorY: y)
         terminalBufferRows = max(1, grid.count)
         terminalCursor = TerminalCursor(row: absoluteCursorRow, column: x, visible: cursorVisible,
-            smartOffset: TerminalSnapshot.smartCursorOffset(grid: grid, joined: prose, row: absoluteCursorRow, column: x, columns: cols))
+            smartOffset: smartOffset)
         let terminal = TerminalSnapshot.capture(grid: grid, remoteRows: rows, x: x, y: y,
             applicationCursor: applicationCursorKeys, keypad: fields.count > 5 && fields[5] == "1", visible: cursorVisible)
         if terminalCapture != terminal || remoteColumns != cols || remoteRows != rows {

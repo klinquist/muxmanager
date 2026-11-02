@@ -12,6 +12,16 @@ public struct TerminalCursor: Equatable, Sendable {
 }
 
 public enum TerminalSnapshot {
+    public static func trimmingBlankLines(_ lines: [String], keepingCursorAt offset: Int?) -> String {
+        var count = lines.count
+        var length = lines.reduce(0) { $0 + TerminalCaptureStyle.parse($1).text.utf16.count } + max(0, lines.count - 1)
+        while count > 0, TerminalCaptureStyle.parse(lines[count - 1]).text.trimmingCharacters(in: .whitespaces).isEmpty {
+            let next = length - TerminalCaptureStyle.parse(lines[count - 1]).text.utf16.count - (count > 1 ? 1 : 0)
+            if let offset, next < offset { break }
+            length = next; count -= 1
+        }
+        return lines.prefix(count).joined(separator: "\n")
+    }
     public static func cursorRow(gridCount: Int, remoteRows: Int, cursorY: Int) -> Int {
         min(max(0, gridCount - 1), max(0, gridCount - remoteRows) + max(0, cursorY))
     }
@@ -48,14 +58,6 @@ public enum TerminalSnapshot {
             guard text[index...].hasPrefix(line) else { return nil }
             index = text.index(index, offsetBy: line.count)
             if index < text.endIndex, text[index] == "\n" { index = text.index(after: index) }
-            else {
-                // -J preserves padding on soft-wrapped rows; the grid capture trims it.
-                let padding = max(0, columns - ShellCompletionScreen.width(of: line))
-                for _ in 0..<padding {
-                    guard index < text.endIndex, text[index] == " " else { return nil }
-                    index = text.index(after: index)
-                }
-            }
         }
         return nil
     }

@@ -10,6 +10,7 @@ struct WorkspaceView: View {
     @State private var diagnostics = false
     @State private var follow = true
     @State private var heldCapture: String?
+    @State private var heldCursor: TerminalCursor?
     @State private var liveToken = 0
     @State private var needsInitialFocus = true
 
@@ -30,7 +31,7 @@ struct WorkspaceView: View {
                         if workspace.displayMode == .smart {
                             MacStyledCapture(capture: heldCapture ?? workspace.joinedCapture,
                                              fontSize: workspace.fontSize,
-                                             cursorOffset: follow && workspace.terminalCursor?.visible == true ? workspace.terminalCursor?.smartOffset : nil,
+                                             cursorOffset: displayedCursor?.visible == true ? displayedCursor?.smartOffset : nil,
                                              follow: $follow, liveToken: liveToken,
                                              onSelection: pauseForSelection, onFocus: focusTerminal)
                             if workspace.terminalMode && workspace.directInput {
@@ -106,8 +107,8 @@ struct WorkspaceView: View {
             Button("OK") { workspace.error = nil }
         } message: { Text(workspace.error ?? "") }
         .onChange(of: follow) { _, value in
-            if value { heldCapture = nil }
-            else if heldCapture == nil { heldCapture = workspace.joinedCapture }
+            if value { heldCapture = nil; heldCursor = nil }
+            else if heldCapture == nil { heldCapture = workspace.joinedCapture; heldCursor = workspace.terminalCursor }
         }
         .onChange(of: workspace.selectedWindowID) { _, window in
             live(); workspace.noteAttentionWindowViewed()
@@ -129,8 +130,9 @@ struct WorkspaceView: View {
         workspace.setTerminalMode(true)
         live()
     }
-    private func live() { heldCapture = nil; follow = true; liveToken += 1 }
-    private func pauseForSelection() { heldCapture = workspace.joinedCapture; follow = false; workspace.directInput = false }
+    private var displayedCursor: TerminalCursor? { heldCapture == nil ? workspace.terminalCursor : heldCursor }
+    private func live() { heldCapture = nil; heldCursor = nil; follow = true; liveToken += 1 }
+    private func pauseForSelection() { heldCapture = workspace.joinedCapture; heldCursor = workspace.terminalCursor; follow = false; workspace.directInput = false }
     private func viewport(_ size: CGSize) {
         let font = NSFont.monospacedSystemFont(ofSize: workspace.fontSize, weight: .regular)
         let width = ("W" as NSString).size(withAttributes: [.font: font]).width

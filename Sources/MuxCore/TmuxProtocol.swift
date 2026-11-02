@@ -109,7 +109,7 @@ public enum TmuxCommand {
     }
     public static func capture(pane: String, joined: Bool, colors: Bool = false) throws -> String {
         guard isID(pane, prefix: "%") else { throw MuxError.message("Invalid pane ID.") }
-        return "capture-pane -p\(joined ? "J" : "")\(colors ? "e" : "") -S -2000 -t \(quote(pane))"
+        return "capture-pane -p\(joined ? "J" : "N")\(colors ? "e" : "") -S -2000 -t \(quote(pane))"
     }
     public static func sendBytes(_ bytes: Data, pane: String) throws -> [String] {
         guard isID(pane, prefix: "%") else { throw MuxError.message("Invalid pane ID.") }

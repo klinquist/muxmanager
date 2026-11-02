@@ -10,6 +10,7 @@ struct WorkspaceView: View {
     @State private var showDiagnostics = false
     @State private var follow = true
     @State private var readingCapture: String?
+    @State private var readingCursor: TerminalCursor?
     @State private var resumeToLive = false
     @State private var liveToken = 0
     @State private var magnificationStart: Double?
@@ -27,7 +28,7 @@ struct WorkspaceView: View {
                         if workspace.conversation {
                             ConversationContent(capture: capture, fontSize: workspace.fontSize, follow: $follow, liveToken: liveToken, onSelection: { pauseForSelection(capture) })
                         } else if workspace.displayMode == .smart {
-                            SmartContent(capture: capture, fontSize: workspace.fontSize, cursorOffset: workspace.terminalMode && follow && workspace.terminalCursor?.visible == true ? workspace.terminalCursor?.smartOffset : nil, follow: $follow, liveToken: liveToken, onSelection: { pauseForSelection(capture) })
+                            SmartContent(capture: capture, fontSize: workspace.fontSize, cursorOffset: workspace.terminalMode && displayedCursor?.visible == true ? displayedCursor?.smartOffset : nil, follow: $follow, liveToken: liveToken, onSelection: { pauseForSelection(capture) })
                         } else {
                             TerminalCanvas(workspace: workspace, follow: $follow, liveToken: liveToken)
                         }
@@ -112,8 +113,8 @@ struct WorkspaceView: View {
             Button("OK") { workspace.error = nil }
         } message: { Text(workspace.error ?? "") }
         .onChange(of: follow) { _, following in
-            if following { readingCapture = nil }
-            else if readingCapture == nil { readingCapture = workspace.joinedCapture }
+            if following { readingCapture = nil; readingCursor = nil }
+            else if readingCapture == nil { readingCapture = workspace.joinedCapture; readingCursor = workspace.terminalCursor }
         }
         .onChange(of: scenePhase) { _, phase in
             // Foreground SSH probes refresh the model, but a held reading
@@ -134,12 +135,13 @@ struct WorkspaceView: View {
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in keyboardVisible = false }
     }
 
+    private var displayedCursor: TerminalCursor? { readingCapture == nil ? workspace.terminalCursor : readingCursor }
     private func showLive() {
-        readingCapture = nil; follow = true; liveToken += 1
+        readingCapture = nil; readingCursor = nil; follow = true; liveToken += 1
     }
     private func pauseForSelection(_ capture: String) {
         workspace.directInput = false; composerFocused = false
-        readingCapture = capture; follow = false
+        readingCapture = capture; readingCursor = workspace.terminalCursor; follow = false
     }
     private func activateTerminalKeyboard() {
         guard workspace.terminalMode, workspace.isConnected else { return }

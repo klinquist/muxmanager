@@ -164,13 +164,17 @@ final class MacTerminalScroll: NSScrollView {
         terminal.pinnedColumns = columns; terminal.pinnedRows = rows
         if terminal.frame.size != size { terminal.setFrameSize(size) }
         if terminal.getTerminal().cols != columns || terminal.getTerminal().rows != rows { terminal.resize(cols: columns, rows: rows) }
-        if changed && !capture.isEmpty { terminal.feed(text: capture); terminal.scroll(toPosition: position) }
+        if changed && !capture.isEmpty { feedCapture(capture); terminal.scroll(toPosition: position) }
     }
     func apply(_ text: String, follow: Bool) {
         let position = terminal.scrollPosition
         capture = text; rows = max(1, text.components(separatedBy: "\r\n").count); layoutTerminal()
-        terminal.selectNone(); terminal.feed(text: text)
+        terminal.selectNone(); feedCapture(text)
         if follow { showLive() } else { terminal.scroll(toPosition: position) }
+    }
+    private func feedCapture(_ text: String) {
+        terminal.feed(text: text)
+        terminal.getTerminal().setCursorStyle(.steadyBlock)
     }
     func showLive() {
         aligningLive = true; defer { aligningLive = false }
