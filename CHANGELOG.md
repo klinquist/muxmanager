@@ -2,6 +2,11 @@
 
 Changes are listed by app version and build number, newest first.
 
+## 1.0 (21) — 2026-11-05
+
+- Fix terminal input becoming unresponsive after Command-A. Smart selects the visible output for copying and retains its keyboard responder; typing, Backspace, Return, or Paste resumes direct input without dropping the first event.
+- Restore input when clicking to clear an Original/Fit selection. Preserve held Smart output while adjusting a selection and keep Command-C local to the selected text.
+
 ## 1.0 (20) — 2026-11-05
 
 - Fix missing Smart cursors and inactive local typing prediction when tmux grid and joined captures contain different trailing padding, including after a Codex terminal resize. Preserve exact matching for visible text and keep following footer lines intact during prediction.

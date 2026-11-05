@@ -13,6 +13,8 @@ struct WorkspaceView: View {
     @State private var heldCursor: TerminalCursor?
     @State private var liveToken = 0
     @State private var needsInitialFocus = true
+    @StateObject private var inputRouter = MacTerminalInputRouter()
+    @State private var selectAllToken = 0
 
     var body: some View {
         VStack(spacing: 0) {
@@ -33,9 +35,14 @@ struct WorkspaceView: View {
                                              fontSize: workspace.fontSize,
                                              cursorOffset: displayedCursor?.visible == true ? displayedCursor?.smartOffset : nil,
                                              follow: $follow, liveToken: liveToken,
-                                             onSelection: pauseForSelection, onFocus: focusTerminal)
-                            if workspace.terminalMode && workspace.directInput {
-                                MacTerminalCanvas(workspace: workspace, follow: .constant(true), liveToken: liveToken, inputOnly: true)
+                                             onSelection: pauseForSelection, onFocus: focusTerminal,
+                                             inputRouter: inputRouter, selectAllToken: selectAllToken)
+                            if workspace.terminalMode {
+                                MacTerminalCanvas(workspace: workspace, follow: .constant(true), liveToken: liveToken, inputOnly: true,
+                                    inputRouter: inputRouter, onSelectAll: {
+                                        pauseForSelection()
+                                        selectAllToken += 1
+                                    })
                                     .frame(width: 1, height: 1).opacity(0.01)
                             }
                         } else {
@@ -132,7 +139,10 @@ struct WorkspaceView: View {
     }
     private var displayedCursor: TerminalCursor? { heldCapture == nil ? workspace.terminalCursor : heldCursor }
     private func live() { heldCapture = nil; heldCursor = nil; follow = true; liveToken += 1 }
-    private func pauseForSelection() { heldCapture = workspace.joinedCapture; heldCursor = workspace.terminalCursor; follow = false; workspace.directInput = false }
+    private func pauseForSelection() {
+        if heldCapture == nil { heldCapture = workspace.joinedCapture; heldCursor = workspace.terminalCursor }
+        follow = false; workspace.directInput = false
+    }
     private func viewport(_ size: CGSize) {
         let font = NSFont.monospacedSystemFont(ofSize: workspace.fontSize, weight: .regular)
         let width = ("W" as NSString).size(withAttributes: [.font: font]).width

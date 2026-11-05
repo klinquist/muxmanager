@@ -54,6 +54,8 @@ struct MacStyledCapture: NSViewRepresentable {
     let liveToken: Int
     let onSelection: () -> Void
     let onFocus: () -> Void
+    var inputRouter: MacTerminalInputRouter? = nil
+    var selectAllToken = 0
     func makeCoordinator() -> Coordinator { Coordinator() }
     func makeNSView(context: Context) -> MacReadingScroll {
         let view = MacReadingScroll()
@@ -63,6 +65,15 @@ struct MacStyledCapture: NSViewRepresentable {
     func updateNSView(_ view: MacReadingScroll, context: Context) {
         context.coordinator.onSelection = onSelection
         view.text.onTerminalFocus = onFocus
+        view.text.onTerminalKey = inputRouter.map { router in { event in
+            onFocus()
+            router.keyDown(with: event)
+        } }
+        view.text.terminalPasteAllowed = inputRouter.map { router in { router.terminal?.canPaste == true } }
+        view.text.onTerminalPaste = inputRouter.map { router in { sender in
+            onFocus()
+            router.paste(sender)
+        } }
         view.text.terminalCursorOffset = cursorOffset
         view.onManualScroll = { follow = false }
         view.follow = follow
@@ -74,11 +85,17 @@ struct MacStyledCapture: NSViewRepresentable {
         }
         if context.coordinator.lastLiveToken != liveToken { view.follow = true; view.text.setSelectedRange(NSRange(location: 0, length: 0)) }
         context.coordinator.lastLiveToken = liveToken
+        if context.coordinator.lastSelectAllToken != selectAllToken {
+            context.coordinator.lastSelectAllToken = selectAllToken
+            view.text.window?.makeFirstResponder(view.text)
+            view.text.selectAll(nil)
+        }
         view.layoutText()
     }
     final class Coordinator: NSObject, NSTextViewDelegate {
         var onSelection: () -> Void = {}
         var updating = false, lastLiveToken = -1
+        var lastSelectAllToken = 0
         var capture: String?
         var fontSize: Double?
         func textViewDidChangeSelection(_ notification: Notification) {
@@ -95,6 +112,9 @@ private final class MacFlippedDocument: NSView { override var isFlipped: Bool { 
 
 final class MacOutputTextView: NSTextView {
     var onTerminalFocus: (() -> Void)?
+    var onTerminalKey: ((NSEvent) -> Void)?
+    var onTerminalPaste: ((Any) -> Void)?
+    var terminalPasteAllowed: (() -> Bool)?
     var terminalCursorOffset: Int? { didSet { needsLayout = true } }
     private let terminalCaret = CALayer()
     var terminalCaretIsSolid: Bool { terminalCaret.animationKeys()?.isEmpty ?? true }
@@ -115,6 +135,21 @@ final class MacOutputTextView: NSTextView {
     override func mouseDown(with event: NSEvent) {
         super.mouseDown(with: event)
         if selectedRange().length == 0 && event.clickCount == 1 { onTerminalFocus?() }
+    }
+    override func keyDown(with event: NSEvent) {
+        if !event.modifierFlags.contains(.command), let onTerminalKey {
+            setSelectedRange(NSRange(location: 0, length: 0))
+            onTerminalKey(event)
+        } else { super.keyDown(with: event) }
+    }
+    override func validateUserInterfaceItem(_ item: NSValidatedUserInterfaceItem) -> Bool {
+        if item.action == #selector(paste(_:)), onTerminalPaste != nil { return terminalPasteAllowed?() == true }
+        return super.validateUserInterfaceItem(item)
+    }
+    override func paste(_ sender: Any?) {
+        guard let onTerminalPaste else { return }
+        setSelectedRange(NSRange(location: 0, length: 0))
+        onTerminalPaste(sender as Any)
     }
     // Terminal output is copied as plain text, including all selected paragraphs.
     override var writablePasteboardTypes: [NSPasteboard.PasteboardType] { [.string] }

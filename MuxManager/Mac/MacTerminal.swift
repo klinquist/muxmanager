@@ -9,6 +9,8 @@ struct MacTerminalCanvas: NSViewRepresentable {
     @Binding var follow: Bool
     let liveToken: Int
     var inputOnly = false
+    var inputRouter: MacTerminalInputRouter? = nil
+    var onSelectAll: (() -> Void)? = nil
     func makeCoordinator() -> Coordinator { Coordinator(workspace) }
     func makeNSView(context: Context) -> MacTerminalScroll {
         let view = MacTerminalScroll(inputOnly: inputOnly)
@@ -17,8 +19,12 @@ struct MacTerminalCanvas: NSViewRepresentable {
     }
     func updateNSView(_ view: MacTerminalScroll, context: Context) {
         view.onManualScroll = { follow = false }
+        inputRouter?.terminal = view.terminal
+        view.terminal.onSelectAll = onSelectAll
         view.terminal.onSelection = { follow = false; workspace.directInput = false }
-        view.terminal.onFocus = { if workspace.terminalMode && workspace.isReadyForInput { workspace.directInput = true } }
+        view.terminal.onFocus = {
+            if workspace.terminalMode && workspace.isReadyForInput && !workspace.directInput { workspace.directInput = true }
+        }
         view.terminal.allowMouseReporting = false // Snapshots cannot preserve live TUI mouse coordinates.
         let window = workspace.selectedWindowID, intent = workspace.connectionIntent
         view.terminal.onPaste = { text in
@@ -70,11 +76,31 @@ struct MacTerminalCanvas: NSViewRepresentable {
     }
 }
 
+/// Smart output and its keyboard responder share this per-workspace route.
+/// Keep the responder mounted while output is selected so the next key can
+/// restore focus and be delivered exactly once.
+@MainActor
+final class MacTerminalInputRouter: ObservableObject {
+    weak var terminal: MacPinnedTerminal?
+    func keyDown(with event: NSEvent) {
+        guard let terminal else { return }
+        terminal.window?.makeFirstResponder(terminal)
+        terminal.resumeInput()
+        terminal.keyDown(with: event)
+    }
+    func paste(_ sender: Any) {
+        guard let terminal else { return }
+        terminal.window?.makeFirstResponder(terminal)
+        terminal.paste(sender)
+    }
+}
+
 final class MacPinnedTerminal: TerminalView {
     var pinnedColumns = 80, pinnedRows = 24
     var canPaste = false
     var onPaste: ((String) -> Void)?
     var onSelection: (() -> Void)?
+    var onSelectAll: (() -> Void)?
     var onFocus: (() -> Void)?
     override func setFrameSize(_ newSize: NSSize) {
         super.setFrameSize(newSize)
@@ -82,15 +108,29 @@ final class MacPinnedTerminal: TerminalView {
     }
     override func selectionChanged(source: Terminal) {
         super.selectionChanged(source: source)
-        if selection.active { onSelection?() }
+        guard selection.active else { return }
+        if let onSelectAll {
+            // The input-only SwiftTerm view has no visible output to select.
+            // Route its Select All action to Smart's visible text instead.
+            selectNone()
+            onSelectAll()
+        } else { onSelection?() }
+    }
+    fileprivate func resumeInput() {
+        selectNone()
+        onFocus?()
+    }
+    override func insertText(_ string: Any, replacementRange: NSRange) {
+        resumeInput()
+        super.insertText(string, replacementRange: replacementRange)
     }
     override func mouseDown(with event: NSEvent) {
-        let selecting = selection.active || event.clickCount > 1
         super.mouseDown(with: event)
-        if !selecting { onFocus?() }
+        if !selection.active && event.clickCount == 1 { onFocus?() }
     }
     override func paste(_ sender: Any) {
         guard canPaste, let text = NSPasteboard.general.string(forType: .string) else { return }
+        resumeInput()
         onPaste?(text)
     }
 }
@@ -111,6 +151,7 @@ final class MacTerminalScroll: NSScrollView {
     var onManualScroll: (() -> Void)?
     private let inputOnly: Bool
     private var eventMonitor: Any?
+    private var keyEventMonitor: Any?
     private var capture = ""
     private var layingOut = false
     private var aligningLive = false
@@ -123,6 +164,10 @@ final class MacTerminalScroll: NSScrollView {
         terminal.changeScrollback(2200)
         hasHorizontalScroller = !inputOnly; hasVerticalScroller = !inputOnly; autohidesScrollers = true
         document.addSubview(terminal); documentView = document
+        keyEventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            self?.prepareForKeyEvent(event)
+            return event
+        }
         contentView.postsBoundsChangedNotifications = true
         NotificationCenter.default.addObserver(self, selector: #selector(clipBoundsChanged), name: NSView.boundsDidChangeNotification, object: contentView)
         if !inputOnly {
@@ -141,7 +186,18 @@ final class MacTerminalScroll: NSScrollView {
         }
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
-    deinit { NotificationCenter.default.removeObserver(self); if let eventMonitor { NSEvent.removeMonitor(eventMonitor) } }
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+        if let eventMonitor { NSEvent.removeMonitor(eventMonitor) }
+        if let keyEventMonitor { NSEvent.removeMonitor(keyEventMonitor) }
+    }
+    func prepareForKeyEvent(_ event: NSEvent) {
+        guard event.window === window, window?.firstResponder === terminal,
+              !event.modifierFlags.contains(.command) else { return }
+        // Restore input before SwiftTerm processes the key and clears its
+        // selection. Programmatic deselection must not activate input.
+        terminal.resumeInput()
+    }
     @objc private func clipBoundsChanged() {
         let y = contentView.bounds.origin.y
         defer { lastScrollY = y }

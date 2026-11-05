@@ -1,6 +1,8 @@
 #if os(macOS)
 import XCTest
 import AppKit
+import SwiftUI
+import SwiftTerm
 import MuxCore
 @testable import Mux_Manager
 
@@ -32,6 +34,87 @@ final class MacAppTests: XCTestCase {
         let model = AppModel(library: LibraryStore())
         let workspace = try XCTUnwrap(model.activeWorkspace)
         for (name, passed) in await workspace.validateInteractiveInput() { XCTAssertTrue(passed, name) }
+    }
+
+    @MainActor
+    func testSmartSelectAllCopyAndTypingRestoreTerminalFocus() async throws {
+        let model = AppModel(library: LibraryStore())
+        let workspace = try XCTUnwrap(model.workspaces[ConnectionProfile.localMacID])
+        let hosting = NSHostingView(rootView: WorkspaceView(workspace: workspace, returnToWindows: {}))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 900, height: 620), styleMask: .titled, backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; window.contentView = hosting
+        window.makeKeyAndOrderFront(nil)
+        defer { window.close() }
+        hosting.layoutSubtreeIfNeeded()
+        try await Task.sleep(for: .milliseconds(100))
+        func descendants(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(descendants) }
+        let input = try XCTUnwrap(descendants(hosting).compactMap { $0 as? MacPinnedTerminal }.first)
+        let output = try XCTUnwrap(descendants(hosting).compactMap { $0 as? MacOutputTextView }.first)
+        let sink = RecordingTerminalKeys(); input.terminalDelegate = sink
+        for (characters, keyCode, flags, expected) in [
+            ("x", UInt16(7), NSEvent.ModifierFlags(), Data("x".utf8)),
+            ("\u{7f}", UInt16(51), NSEvent.ModifierFlags(), Data([127])),
+            ("\r", UInt16(36), NSEvent.ModifierFlags(), Data([13])),
+            ("\u{1}", UInt16(0), NSEvent.ModifierFlags.control, Data([1]))
+        ] {
+            window.makeFirstResponder(input)
+            XCTAssertTrue(NSApp.sendAction(#selector(NSText.selectAll(_:)), to: input, from: nil))
+            try await Task.sleep(for: .milliseconds(50))
+            XCTAssertFalse(workspace.directInput)
+            XCTAssertTrue(window.firstResponder === output)
+            let pasteItem = NSMenuItem(title: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+            XCTAssertTrue(output.validateUserInterfaceItem(pasteItem))
+            XCTAssertEqual(output.selectedRange().length, output.string.utf16.count)
+            XCTAssertGreaterThan(output.selectedRange().length, 0)
+            XCTAssertTrue(descendants(hosting).contains { $0 === input }, "Smart must retain its input view during selection")
+            let clipboard = NSPasteboard.withUniqueName()
+            clipboard.declareTypes([.string], owner: nil)
+            XCTAssertTrue(output.writeSelection(to: clipboard, type: .string))
+            XCTAssertEqual(clipboard.string(forType: .string), output.string)
+            clipboard.releaseGlobally()
+            sink.data = Data()
+            let event = try XCTUnwrap(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: flags,
+                timestamp: 0, windowNumber: window.windowNumber, context: nil, characters: characters,
+                charactersIgnoringModifiers: flags.contains(.control) ? "a" : characters, isARepeat: false, keyCode: keyCode))
+            output.keyDown(with: event)
+            XCTAssertEqual(sink.data, expected, "The first key after Select All must arrive exactly once: keyCode=\(keyCode), expected=\(expected as NSData)")
+            XCTAssertTrue(workspace.directInput)
+            XCTAssertTrue(window.firstResponder === input)
+            XCTAssertEqual(output.selectedRange().length, 0)
+            try await Task.sleep(for: .milliseconds(30))
+        }
+    }
+
+    @MainActor
+    func testOriginalSelectAllThenTypingAndClickResumeInput() throws {
+        let scroll = MacTerminalScroll(inputOnly: false)
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 640, height: 360), styleMask: .borderless, backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; window.contentView = scroll
+        defer { window.close() }
+        scroll.layoutSubtreeIfNeeded(); scroll.layoutTerminal()
+        let terminal = scroll.terminal
+        window.makeFirstResponder(terminal)
+        terminal.feed(text: "old output\r\n$ ")
+        let sink = RecordingTerminalKeys(); terminal.terminalDelegate = sink
+        var directInput = true
+        terminal.onSelection = { directInput = false }
+        terminal.onFocus = { directInput = true }
+        terminal.selectAll(nil)
+        XCTAssertTrue(terminal.selection.active)
+        XCTAssertFalse(directInput)
+        let event = try XCTUnwrap(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+            windowNumber: window.windowNumber, context: nil, characters: "\u{7f}", charactersIgnoringModifiers: "\u{7f}", isARepeat: false, keyCode: 51))
+        scroll.prepareForKeyEvent(event)
+        terminal.keyDown(with: event)
+        XCTAssertEqual(sink.data, Data([127]))
+        XCTAssertTrue(directInput)
+        XCTAssertFalse(terminal.selection.active)
+        terminal.selectAll(nil)
+        let click = try XCTUnwrap(NSEvent.mouseEvent(with: .leftMouseDown, location: NSPoint(x: 10, y: 10), modifierFlags: [],
+            timestamp: 0, windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1))
+        terminal.mouseDown(with: click)
+        XCTAssertTrue(directInput)
+        XCTAssertFalse(terminal.selection.active)
     }
 
     @MainActor
@@ -132,5 +215,16 @@ final class MacAppTests: XCTestCase {
         let report = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
         XCTAssertEqual(report["passed"] as? Bool, true, "\(report)")
     }
+}
+
+@MainActor
+private final class RecordingTerminalKeys: NSObject, TerminalViewDelegate {
+    var data = Data()
+    func sizeChanged(source: TerminalView, newCols: Int, newRows: Int) {}
+    func setTerminalTitle(source: TerminalView, title: String) {}
+    func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {}
+    func send(source: TerminalView, data: ArraySlice<UInt8>) { self.data.append(contentsOf: data) }
+    func scrolled(source: TerminalView, position: Double) {}
+    func rangeChanged(source: TerminalView, startY: Int, endY: Int) {}
 }
 #endif

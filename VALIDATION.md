@@ -184,3 +184,10 @@ Full SSH/device/iCloud acceptance requires provisioned devices and hosts. Core u
 - All six native Mac tests pass, including mismatched grid/joined captures with delayed acknowledgements, a visible Smart caret while the hidden SwiftTerm view owns keyboard focus, and retaining the local group/connection/selected window while switching to and from a remote workspace.
 
 - The full iOS simulator app build passes after the shared-code changes. The universal Mac build 20 includes arm64 and x86_64, is Developer ID signed with Production CloudKit/shared Keychain entitlements, and passed Apple notarization (`eb34022e-7dc1-4606-b156-f8bf1aea781d`). The ticket was stapled and validated; Gatekeeper assessment reports accepted from Notarized Developer ID.
+
+## Mac Select All input recovery checked 2026-11-05 (build 21)
+
+- Smart keeps its keyboard responder mounted during output selection. Select All from that responder is routed to the visible TextKit capture, which owns Copy while selected. A normal key restores focus and is forwarded once through SwiftTerm; Paste remains an explicit ordered paste. Original/Fit restores direct input before processing a keyboard event or after clicking to clear a selection. Programmatic deselection never activates input.
+- All eight native Mac tests pass. The mounted Smart WorkspaceView regression exercises native Select All, full plain-text Copy using a private pasteboard, Paste command validation, typing, Backspace, Return, and Control-A. It verifies the retained input view, actual responder changes, direct-input state, selection clearing, and exactly-once bytes. The Original test covers Select All → Backspace and Select All → click recovery. Existing rendering, reconnect, delayed input ordering, local sidebar, and isolated tmux tests also pass.
+
+- The universal Release archive includes arm64 and x86_64. Mac build 21 is Developer ID signed with Production CloudKit/shared Keychain entitlements and passed Apple notarization (`d4a46ffc-64bf-4f93-aeb3-0ae83ac17fa4`). Its ticket was stapled and validated, and Gatekeeper reports accepted from Notarized Developer ID.
