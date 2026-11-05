@@ -48,6 +48,16 @@ final class AppModel: ObservableObject {
             }
         }
         #endif
+        #if os(macOS)
+        // Keep the local workspace available independently of the selected SSH
+        // host. Creating it does not start a shell or a tmux connection.
+        #if DEBUG
+        let local = workspace(for: .localMac)
+        if LibraryStore.screenshotScene != nil { local.configureScreenshot(scene: "shell") }
+        #else
+        _ = workspace(for: .localMac)
+        #endif
+        #endif
     }
     var connectionProfiles: [ConnectionProfile] {
         #if os(macOS)
@@ -57,6 +67,19 @@ final class AppModel: ObservableObject {
         #endif
     }
     var activeWorkspace: HostWorkspace? { activeHostID.flatMap { workspaces[$0] } }
+    #if os(macOS)
+    var sidebarWorkspaces: [HostWorkspace] {
+        var result = workspaces[ConnectionProfile.localMacID].map { [$0] } ?? []
+        if let activeWorkspace, !activeWorkspace.profile.isLocalMac { result.append(activeWorkspace) }
+        return result
+    }
+    #endif
+
+    func activate(_ workspace: HostWorkspace) {
+        guard workspaces[workspace.id] === workspace else { return }
+        cancelNotificationNavigation()
+        activeHostID = workspace.id
+    }
 
     func open(_ profile: ConnectionProfile) {
         cancelNotificationNavigation()

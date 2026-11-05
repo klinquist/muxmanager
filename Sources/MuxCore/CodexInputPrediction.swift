@@ -16,6 +16,7 @@ public struct CodexInputPrediction {
         let row: Int
         let start: Int
         let joinedStart: Int
+        let joinedLength: Int
         let line: StyledTerminalText
         let placeholder: Bool
         let edit: Edit
@@ -55,9 +56,17 @@ public struct CodexInputPrediction {
         let placeholder = cursor.column == prefix.count && !suffix.isEmpty && suffix.allSatisfy { $0.1 || $0.0 == " " }
         let start = offset - suffixOffset
         let joinedText = styledJoined.text as NSString
-        guard start >= 0, start + line.text.utf16.count <= joinedText.length,
-              joinedText.substring(with: NSRange(location: start, length: line.text.utf16.count)) == line.text else { reset(); return }
-        prompt = Prompt(row: cursor.row, start: prefix.count, joinedStart: start, line: line, placeholder: placeholder, edit: edit)
+        guard start >= 0, start <= joinedText.length else { reset(); return }
+        let joinedLine = joinedText.substring(from: start).prefix(while: { $0 != "\n" })
+        // A grid row can contain more painted trailing spaces than its -J
+        // counterpart. Replace only the joined row, preserving the next line.
+        var joinedContent = String(joinedLine)
+        while joinedContent.last == " " { joinedContent.removeLast() }
+        var gridContent = text
+        while gridContent.last == " " { gridContent.removeLast() }
+        guard joinedContent == gridContent else { reset(); return }
+        prompt = Prompt(row: cursor.row, start: prefix.count, joinedStart: start, joinedLength: joinedLine.utf16.count,
+                        line: line, placeholder: placeholder, edit: edit)
     }
 
     /// Returns true only when the entire key event can be predicted safely.
@@ -113,7 +122,7 @@ public struct CodexInputPrediction {
                 length: prompt.line.text.utf16.count - prefix.utf16.count), with: input)
             projectedGrid[prompt.row] = line.capture
             projectedJoined = styledJoined.replacing(
-                NSRange(location: prompt.joinedStart, length: prompt.line.text.utf16.count), with: line).capture
+                NSRange(location: prompt.joinedStart, length: prompt.joinedLength), with: line).capture
         }
         return Projection(grid: projectedGrid, joined: projectedJoined,
                           cursor: TerminalCursor(row: prompt.row, column: edit.column, visible: true,

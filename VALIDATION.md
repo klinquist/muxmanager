@@ -176,3 +176,11 @@ Full SSH/device/iCloud acceptance requires provisioned devices and hosts. Core u
 - The full iOS simulator app build also passes after the shared-source changes. These checks use fictional screens and delayed in-memory input acknowledgements, plus an isolated local shell; they do not exercise a live remote Codex session or physical IME composition.
 
 - The universal Release archive includes arm64 and x86_64. Build 19 is Developer ID signed with Production CloudKit and the shared Keychain group. Apple notarization was accepted (`44bc0dfe-f4d4-4db7-ada0-3d100da3c1fc`), its ticket was stapled and validated, and Gatekeeper assessment reports `accepted`, `source=Notarized Developer ID`.
+
+## Smart Codex padding and persistent local sidebar checked 2026-11-05 (build 20)
+
+- A read-only capture of a real Codex CLI 0.166.0 tmux pane reproduced the missing Smart offset and disabled prediction in build 19. Its grid retained painted spaces to 200 columns while joined rows retained fewer spaces, with older 100-column soft-wrapped rows. Mapping now tolerates these trailing-padding differences while still rejecting changed visible content. Prediction replaces the measured joined row length rather than the padded grid row length, preserving the footer.
+- All 85 core tests pass, including sanitized regression cases matching that capture's padding/wrap shape. A standalone check against the actual captured data maps the cursor and predicts typing at its correct Smart position. No terminal transcript is included in the repository.
+- All six native Mac tests pass, including mismatched grid/joined captures with delayed acknowledgements, a visible Smart caret while the hidden SwiftTerm view owns keyboard focus, and retaining the local group/connection/selected window while switching to and from a remote workspace.
+
+- The full iOS simulator app build passes after the shared-code changes. The universal Mac build 20 includes arm64 and x86_64, is Developer ID signed with Production CloudKit/shared Keychain entitlements, and passed Apple notarization (`eb34022e-7dc1-4606-b156-f8bf1aea781d`). The ticket was stapled and validated; Gatekeeper assessment reports accepted from Notarized Developer ID.

@@ -31,6 +31,22 @@ final class TerminalSnapshotTests: XCTestCase {
         XCTAssertEqual(TerminalSnapshot.trimmingBlankLines(lines, keepingCursorAt: offset), "output\n")
         XCTAssertEqual(TerminalSnapshot.trimmingBlankLines(lines, keepingCursorAt: nil), "output")
     }
+    func testPaintedPaddingAcrossResizeAndSoftWrapMapsCursor() {
+        let history = String(repeating: "h", count: 200)
+        let spaces: (Int) -> String = { String(repeating: " ", count: $0) }
+        // Measured shape of a real Codex capture after a 100→200 column resize:
+        // one soft-wrapped history row, shortened blank padding, then the prompt.
+        let grid = [history, spaces(100), spaces(200), "› " + spaces(198), "footer" + spaces(194)]
+        let before = history + spaces(62) + "\n" + spaces(91) + "\n"
+        let joined = before + "› " + spaces(89) + "\nfooter" + spaces(194)
+        XCTAssertEqual(TerminalSnapshot.smartCursorOffset(grid: grid, joined: joined, row: 3, column: 2, columns: 200), before.utf16.count + 2)
+    }
+
+    func testPaddingToleranceDoesNotHideChangedContent() {
+        XCTAssertNil(TerminalSnapshot.smartCursorOffset(grid: ["old    ", "› "], joined: "different\n› ", row: 1, column: 2, columns: 80))
+        XCTAssertNil(TerminalSnapshot.smartCursorOffset(grid: ["a    ", "› "], joined: "a b\n› ", row: 1, column: 2, columns: 80))
+    }
+
     func testUnicodeCellsAndCaptureMismatch() {
         XCTAssertEqual(TerminalSnapshot.smartCursorOffset(grid: ["$ 界🙂a"], joined: "$ 界🙂a", row: 0, column: 6, columns: 80), 5)
         XCTAssertNil(TerminalSnapshot.smartCursorOffset(grid: ["old", "$ hi"], joined: "changed\n$ hi", row: 1, column: 4, columns: 80))

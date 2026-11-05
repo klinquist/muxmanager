@@ -114,6 +114,29 @@ final class CodexInputPredictionTests: XCTestCase {
         XCTAssertFalse(prediction.hasPendingInput)
     }
 
+    func testDifferentJoinedPaddingStillPredictsAndPreservesFooter() throws {
+        var prediction = CodexInputPrediction()
+        let spaces: (Int) -> String = { String(repeating: " ", count: $0) }
+        let history = String(repeating: "h", count: 200)
+        let before = history + spaces(62) + "\n" + spaces(91) + "\n"
+        func capture(_ input: String, column: Int) {
+            let grid = [history, spaces(100), spaces(200), "› " + input + spaces(198 - input.count), "footer"]
+            let joined = before + "› " + input + spaces(89 - input.count) + "\nfooter"
+            let offset = TerminalSnapshot.smartCursorOffset(grid: grid, joined: joined, row: 3, column: column, columns: 200)
+            prediction.observe(grid: grid, joined: joined,
+                cursor: TerminalCursor(row: 3, column: column, visible: true, smartOffset: offset), columns: 200)
+        }
+        capture("", column: 2)
+        XCTAssertNotNil(prediction.projection)
+        type("hello", into: &prediction)
+        let projected = try XCTUnwrap(prediction.projection)
+        XCTAssertEqual(TerminalCaptureStyle.parse(projected.joined).text, before + "› hello\nfooter")
+        XCTAssertEqual(projected.cursor.smartOffset, before.utf16.count + 7)
+        XCTAssertEqual(TerminalCaptureStyle.parse(projected.grid[3]).text, "› hello")
+        capture("hello", column: 7)
+        XCTAssertFalse(prediction.hasPendingInput)
+    }
+
     func testCombiningCharactersKeepCursorAtGraphemeBoundary() {
         var prediction = CodexInputPrediction()
         observe(&prediction)

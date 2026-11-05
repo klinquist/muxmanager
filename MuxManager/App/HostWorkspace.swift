@@ -343,6 +343,21 @@ final class HostWorkspace: ObservableObject, Identifiable {
             terminalMode = true; directInput = false
             displayMode = scene == "cursor-original" ? .original : .smart
         }
+        #if os(macOS)
+        if scene == "codex-smart" {
+            let lines = ["\u{1b}[1mOpenAI Codex\u{1b}[0m", "", "• Updated the terminal input handling.",
+                "  Ready for the next instruction.", "", "› \u{1b}[2mAsk Codex to do anything\u{1b}[0m", "", "  100% context left · ? for shortcuts"]
+            let grid = lines.map { $0 + String(repeating: " ", count: max(0, 200 - TerminalCaptureStyle.parse($0).text.count)) }
+            let joined = lines.joined(separator: "\n")
+            let offset = TerminalSnapshot.smartCursorOffset(grid: grid, joined: joined, row: 5, column: 2, columns: 200)
+            let cursor = TerminalCursor(row: 5, column: 2, visible: true, smartOffset: offset)
+            remoteColumns = 200; remoteRows = 24; terminalBufferRows = grid.count; terminalLiveRow = grid.count - 1
+            macSnapshot = MacSnapshot(pane: "%1", grid: grid, joined: joined, cursor: cursor, rows: 24, applicationCursor: false, keypad: false)
+            macPrediction.observe(grid: grid, joined: joined, cursor: cursor, columns: 200)
+            macPrediction.type(Data("fix the tests".utf8))
+            renderMacSnapshot()
+        }
+        #endif
         snapshotRevision += 1
     }
     #endif
@@ -1459,6 +1474,7 @@ private actor AttentionFixturePeer {
     private var screens: [String: String] = Dictionary(uniqueKeysWithValues: (1...11).map {
         ("%\($0)", [1, 11].contains($0) ? "• Working (5s · esc to interrupt)\n›\n100% context left" : "• Complete\n›\n100% context left")
     })
+    private var gridScreens: [String: String] = [:]
     private(set) var reads: [String: Int] = [:]
     private(set) var commands: [String] = []
     private var additionalTargets = false
@@ -1467,7 +1483,9 @@ private actor AttentionFixturePeer {
     private var rejectInput = false
     private var cursorMetadata = "120 36 0 1 0 0 1 0 2000 0"
     func install(_ value: ControlChannel?) { channel = value }
-    func screen(_ pane: String, _ value: String) { screens[pane] = value }
+    func screen(_ pane: String, _ value: String, grid: String? = nil) {
+        screens[pane] = value; gridScreens[pane] = grid
+    }
     func hideWindow(_ index: Int) { hiddenWindow = index }
     func allowInput(delay: Duration, reject: Bool) { inputDelay = delay; rejectInput = reject }
     func cursor(column: Int, row: Int, visible: Bool = true) {
@@ -1496,7 +1514,8 @@ private actor AttentionFixturePeer {
             lines = (1...11).filter { $0 != hiddenWindow }.map { "@\($0)\t\($0 - 1)\tproject-\($0)\t%\($0)\t120\t36\tcodex" }
         } else if command.hasPrefix("capture-pane"), let pane = screens.keys.first(where: { command.hasSuffix(TmuxCommand.quote($0)) }) {
             reads[pane, default: 0] += 1
-            lines = screens[pane]!.components(separatedBy: "\n")
+            let capture = command.hasPrefix("capture-pane -pN") ? gridScreens[pane] ?? screens[pane]! : screens[pane]!
+            lines = capture.components(separatedBy: "\n")
         } else if command.hasPrefix("display-message") { lines = [cursorMetadata] }
         else if command.hasPrefix("refresh-client") { lines = [] }
         else { throw MuxError.message("Unexpected fixture command.") }
@@ -1516,7 +1535,8 @@ extension HostWorkspace {
         await peer.install(channel); await channel.receive(Data("%begin 0 0 0\n%end 0 0 0\n".utf8))
         control = channel
         var checks: [String: Bool] = [:]
-        await peer.screen("%1", "Earlier output\n› \nfooter")
+        await peer.screen("%1", "Earlier output\n› \nfooter",
+            grid: "Earlier output" + String(repeating: " ", count: 20) + "\n› " + String(repeating: " ", count: 118) + "\nfooter")
         await peer.cursor(column: 2, row: 1, visible: false)
         try? await refreshSnapshot()
         checks["hiddenCodexCursorIsVisible"] = terminalCursor?.visible == true && terminalCursor?.smartOffset == "Earlier output\n› ".utf16.count
@@ -1533,7 +1553,8 @@ extension HostWorkspace {
         for task in pending { await task.value }
         try? await refreshSnapshot()
         checks["staleSnapshotKeepsPendingInput"] = joinedCapture.contains("› abcdefghij")
-        await peer.screen("%1", "Earlier output\n› abcdefghij\nfooter")
+        await peer.screen("%1", "Earlier output\n› abcdefghij\nfooter",
+            grid: "Earlier output" + String(repeating: " ", count: 20) + "\n› abcdefghij" + String(repeating: " ", count: 108) + "\nfooter")
         await peer.cursor(column: 12, row: 1, visible: false)
         try? await refreshSnapshot()
         checks["remoteEchoDoesNotDuplicateInput"] = joinedCapture == "Earlier output\n› abcdefghij\nfooter" && !macPrediction.hasPendingInput
@@ -1563,7 +1584,8 @@ extension HostWorkspace {
         }
         checks["typingRefreshesBeforeOldPollingTick"] = snapshotRevision > revision && began.duration(to: .now) < .milliseconds(250)
         pollTask?.cancel(); pollWake?.finish(); await pollTask?.value
-        await peer.screen("%1", "Earlier output\n› \nfooter")
+        await peer.screen("%1", "Earlier output\n› \nfooter",
+            grid: "Earlier output" + String(repeating: " ", count: 20) + "\n› " + String(repeating: " ", count: 118) + "\nfooter")
         await peer.cursor(column: 2, row: 1, visible: false)
         try? await refreshSnapshot()
         await peer.allowInput(delay: .milliseconds(100), reject: true)

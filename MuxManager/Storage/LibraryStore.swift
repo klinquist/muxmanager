@@ -34,7 +34,7 @@ final class LibraryStore: ObservableObject {
         // A Debug-only fixture entry point for native launchers that do not pass arguments.
         value = value ?? Bundle.main.object(forInfoDictionaryKey: "MuxValidationScene") as? String
         #endif
-        return ["hosts", "smart", "original", "fit", "connection", "preview", "shell", "history", "history-original", "connecting", "connecting-hosts", "copy", "copy-original", "copy-conversation", "input", "input-original", "attention", "links", "reconnect", "compose", "mac", "mac-tests", "cursor-smart", "cursor-original"].contains(value ?? "") ? value : nil
+        return ["hosts", "smart", "original", "fit", "connection", "preview", "shell", "history", "history-original", "connecting", "connecting-hosts", "copy", "copy-original", "copy-conversation", "input", "input-original", "attention", "links", "reconnect", "compose", "mac", "mac-tests", "cursor-smart", "cursor-original", "codex-smart"].contains(value ?? "") ? value : nil
     }
     #endif
 

@@ -16,8 +16,9 @@ struct RootView: View {
     var body: some View {
         NavigationSplitView(columnVisibility: $visibility, preferredCompactColumn: $preferredColumn) {
             List {
+                if !hostProfiles.isEmpty {
                 Section {
-                    ForEach(model.connectionProfiles) { profile in
+                    ForEach(hostProfiles) { profile in
                       VStack(alignment: .leading, spacing: 6) {
                         HStack(spacing: 12) {
                             Button { model.open(profile) } label: {
@@ -59,7 +60,19 @@ struct RootView: View {
                         }
                     }
                 } header: { Label("Hosts", systemImage: "network") }
+                }
 
+                #if os(macOS)
+                ForEach(model.sidebarWorkspaces) { workspace in
+                    WindowSidebar(workspace: workspace, isActive: model.activeHostID == workspace.id,
+                        connect: workspace.profile.isLocalMac ? { model.open(workspace.profile) } : nil,
+                        selected: { model.activate(workspace) },
+                        manage: { action in
+                            model.activate(workspace)
+                            managementRequest = ManagementRequest(workspace: workspace, action: action)
+                        })
+                }
+                #else
                 if let workspace = model.activeWorkspace {
                     WindowSidebar(workspace: workspace, selected: {
                         model.cancelNotificationNavigation()
@@ -67,6 +80,7 @@ struct RootView: View {
                         if AppPlatform.isPhone { visibility = .detailOnly }
                     }, manage: { action in managementRequest = ManagementRequest(workspace: workspace, action: action) })
                 }
+                #endif
             }
             .listStyle(.sidebar)
             .navigationTitle("Mux Manager")
@@ -182,6 +196,9 @@ struct RootView: View {
             Button("OK") { library.error = nil }
         } message: { Text(library.error ?? "") }
     }
+    private var hostProfiles: [ConnectionProfile] {
+        model.connectionProfiles.filter { !AppPlatform.isLocal($0) }
+    }
     private func dismissSheetsForNotification() {
         // Dismiss sheets so a notification tap can reveal its destination.
         diagnosticWorkspace = nil; showSyncDiagnostics = false; showLicenses = false
@@ -276,11 +293,24 @@ private struct OpenSourceLicensesView: View {
 
 struct WindowSidebar: View {
     @ObservedObject var workspace: HostWorkspace
+    var isActive = true
+    var connect: (() -> Void)? = nil
     var selected: () -> Void
     var manage: (ManagementAction) -> Void
     var body: some View {
-      if workspace.isConnected {
+      if workspace.isConnected || connect != nil {
         Section {
+            if let connect {
+                HStack {
+                    Button(action: connect) {
+                        Label("Local shell", systemImage: "desktopcomputer")
+                    }.buttonStyle(.plain)
+                    Spacer()
+                    HostConnectionControl(workspace: workspace, connect: connect)
+                }
+                HostConnectionProgress(workspace: workspace)
+            }
+            if workspace.isConnected {
             HStack {
                 Circle().fill(workspace.isConnected ? .mint : .orange).frame(width: 6, height: 6)
                 Text(workspace.statusText).font(.caption).foregroundStyle(.secondary).lineLimit(2)
@@ -303,12 +333,13 @@ struct WindowSidebar: View {
                         Image(systemName: window.command.lowercased().contains("codex") ? "sparkle" : "terminal")
                         Text(window.name).lineLimit(1)
                         Spacer()
-                        if window.id == workspace.selectedWindowID { Image(systemName: "checkmark").font(.caption.bold()) }
-                    }.foregroundStyle(window.id == workspace.selectedWindowID ? .mint : .primary)
+                        if isActive && window.id == workspace.selectedWindowID { Image(systemName: "checkmark").font(.caption.bold()) }
+                    }.foregroundStyle(isActive && window.id == workspace.selectedWindowID ? .mint : .primary)
                 }.disabled(workspace.busy)
             }
             Button("New window", systemImage: "plus.rectangle") { manage(.newWindow) }.disabled(workspace.selectedSessionID == nil)
             Button("New session", systemImage: "plus.rectangle.on.folder") { manage(.newSession) }
+            }
         } header: { Text(workspace.profile.name) }
       }
     }

@@ -2,6 +2,11 @@
 
 Changes are listed by app version and build number, newest first.
 
+## 1.0 (20) — 2026-11-05
+
+- Fix missing Smart cursors and inactive local typing prediction when tmux grid and joined captures contain different trailing padding, including after a Codex terminal resize. Preserve exact matching for visible text and keep following footer lines intact during prediction.
+- Keep local terminals in a separate This Mac sidebar group while a remote host is selected. Switching between local and remote windows preserves both connections and their selected windows.
+
 ## 1.0 (19) — 2026-11-05
 
 - Echo single-row Codex prompt edits immediately on Mac while waiting for tmux, then reconcile remote captures without duplicating input. Clear predictions on failed input, window/connection changes, unsupported controls, and a two-second timeout.

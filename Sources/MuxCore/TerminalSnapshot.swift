@@ -55,9 +55,22 @@ public enum TerminalSnapshot {
                 guard cells == column else { return nil }
                 return text[..<index].utf16.count
             }
-            guard text[index...].hasPrefix(line) else { return nil }
-            index = text.index(index, offsetBy: line.count)
+            // -N grid captures retain painted padding that -J may shorten,
+            // especially after a TUI resize. Match content exactly, but allow
+            // a hard newline to end the trailing spaces early.
+            var contentEnd = line.endIndex
+            while contentEnd > line.startIndex, line[line.index(before: contentEnd)] == " " {
+                contentEnd = line.index(before: contentEnd)
+            }
+            let content = line[..<contentEnd]
+            guard text[index...].hasPrefix(content) else { return nil }
+            index = text.index(index, offsetBy: content.count)
+            var padding = line.distance(from: contentEnd, to: line.endIndex)
+            while padding > 0, index < text.endIndex, text[index] == " " {
+                index = text.index(after: index); padding -= 1
+            }
             if index < text.endIndex, text[index] == "\n" { index = text.index(after: index) }
+            else if padding > 0 { return nil }
         }
         return nil
     }

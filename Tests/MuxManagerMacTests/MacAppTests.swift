@@ -37,28 +37,59 @@ final class MacAppTests: XCTestCase {
     @MainActor
     func testOptimisticCodexCursorRendering() throws {
         var prediction = CodexInputPrediction()
-        prediction.observe(grid: ["› "], joined: "› ",
-            cursor: TerminalCursor(row: 0, column: 2, visible: false, smartOffset: 2), columns: 80)
+        let grid = ["Earlier output" + String(repeating: " ", count: 40), "› " + String(repeating: " ", count: 78), "footer"]
+        let joined = "Earlier output\n› \nfooter"
+        let offset = TerminalSnapshot.smartCursorOffset(grid: grid, joined: joined, row: 1, column: 2, columns: 80)
+        prediction.observe(grid: grid, joined: joined,
+            cursor: TerminalCursor(row: 1, column: 2, visible: false, smartOffset: offset), columns: 80)
         XCTAssertTrue(prediction.type(Data("hi🙂".utf8)))
         let projected = try XCTUnwrap(prediction.projection)
         let reading = MacReadingScroll(frame: NSRect(x: 0, y: 0, width: 360, height: 200))
         let window = NSWindow(contentRect: reading.frame, styleMask: .borderless, backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
         window.contentView = reading
+        // Smart routes key events through a tiny SwiftTerm view, leaving its
+        // read-only TextKit output unfocused while the caret is visible.
+        let input = MacPinnedTerminal(frame: NSRect(x: 0, y: 0, width: 1, height: 1))
+        input.alphaValue = 0.01; reading.addSubview(input)
+        window.makeFirstResponder(input)
         defer { window.close() }
         reading.text.textStorage?.setAttributedString(MacTerminalStyle.attributed(TerminalCaptureStyle.parse(projected.joined), size: 14))
         reading.text.terminalCursorOffset = projected.cursor.smartOffset
         reading.layoutSubtreeIfNeeded(); reading.layoutText(); reading.text.layoutSubtreeIfNeeded()
-        XCTAssertEqual(reading.text.terminalCursorOffset, "› hi🙂".utf16.count)
-        XCTAssertGreaterThan(try XCTUnwrap(reading.text.terminalCaretRect).height, 0)
+        XCTAssertEqual(reading.text.terminalCursorOffset, "Earlier output\n› hi🙂".utf16.count)
+        let caret = try XCTUnwrap(reading.text.terminalCaretRect)
+        XCTAssertGreaterThan(caret.height, 0)
+        XCTAssertTrue(reading.text.visibleRect.intersects(caret))
+        XCTAssertTrue(window.firstResponder === input)
         XCTAssertTrue(reading.text.terminalCaretIsSolid)
 
         let raw = MacTerminalScroll(inputOnly: false)
-        raw.frame = reading.frame; raw.columns = 80; raw.liveRow = 0
-        raw.apply(TerminalSnapshot.capture(grid: projected.grid, remoteRows: 1,
-            x: projected.cursor.column, y: 0, applicationCursor: false, keypad: false, visible: projected.cursor.visible), follow: true)
+        raw.frame = reading.frame; raw.columns = 80; raw.liveRow = 1
+        raw.apply(TerminalSnapshot.capture(grid: projected.grid, remoteRows: 3,
+            x: projected.cursor.column, y: 1, applicationCursor: false, keypad: false, visible: projected.cursor.visible), follow: true)
         XCTAssertEqual(raw.terminal.getTerminal().getCursorLocation().x, 6)
         XCTAssertEqual(raw.terminal.getTerminal().options.cursorStyle.tagName, "steadyBlock")
+    }
+
+    @MainActor
+    func testLocalTerminalsRemainGroupedWhileRemoteIsActive() throws {
+        let model = AppModel(library: LibraryStore())
+        let remote = try XCTUnwrap(model.activeWorkspace)
+        let local = try XCTUnwrap(model.workspaces[ConnectionProfile.localMacID])
+        XCTAssertFalse(remote.profile.isLocalMac)
+        XCTAssertEqual(model.sidebarWorkspaces.map(\.id), [local.id, remote.id])
+        XCTAssertFalse(local.windows.isEmpty)
+        let localSelection = local.selectedWindowID
+        let remoteSelection = remote.selectedWindowID
+        model.activate(local)
+        XCTAssertTrue(model.activeWorkspace === local)
+        XCTAssertEqual(remote.selectedWindowID, remoteSelection)
+        XCTAssertTrue(remote.isConnected)
+        model.activate(remote)
+        XCTAssertEqual(model.sidebarWorkspaces.map(\.id), [local.id, remote.id])
+        XCTAssertEqual(local.selectedWindowID, localSelection)
+        XCTAssertTrue(local.isConnected)
     }
 
     @MainActor

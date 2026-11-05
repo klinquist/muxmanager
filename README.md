@@ -37,11 +37,11 @@ Sync runs automatically when the app becomes active, after edits, and periodical
 
 ## macOS
 
-[Download Mux Manager for Mac — version 1.0, build 19](https://linquist.com/muxmanager/mac/). The universal app supports Apple Silicon and Intel Macs running **macOS 15 or later**. Unzip it, move **Mux Manager.app** to Applications, and open it.
+[Download Mux Manager for Mac — version 1.0, build 20](https://linquist.com/muxmanager/mac/). The universal app supports Apple Silicon and Intel Macs running **macOS 15 or later**. Unzip it, move **Mux Manager.app** to Applications, and open it.
 
 Open **`MuxManagerMac.xcodeproj`**, select **MuxManagerMac**, and choose My Mac to build from source. It uses the same two direct libraries and pinned versions as iOS. Set your signing team/bundle/container in `Config/Local.xcconfig` as above; enable the same CloudKit container for the Mac App ID. Production downloads use Production CloudKit and the same Keychain access group as the iPhone/iPad release. Sign in to the same Apple Account and enable iCloud Keychain to receive saved connections and credentials. Development and Production databases remain separate.
 
-**This Mac** is always available on Mac and opens by default. It runs the logged-in user's shell through local tmux, without an SSH server or authentication. If no tmux server exists, it starts a session named Mux-Manager. This built-in entry is outside the saved connection library, never enters Keychain or CloudKit, and does not appear on iPhone/iPad. Local commands run with your Mac user's permissions, subject to macOS privacy controls. Install tmux 3.2 or later locally before connecting.
+**This Mac** opens by default and keeps its own sidebar group visible while a remote host is selected. Switch between local and remote windows without disconnecting either workspace. It runs the logged-in user's shell through local tmux, without an SSH server or authentication. If no tmux server exists, it starts a session named Mux-Manager. This built-in entry is outside the saved connection library, never enters Keychain or CloudKit, and does not appear on iPhone/iPad. Local commands run with your Mac user's permissions, subject to macOS privacy controls. Install tmux 3.2 or later locally before connecting.
 
 The direct Mac download uses normal desktop process/file access so it can run your shell, read shell startup files, and reach your tmux socket. Developer ID signing, hardened runtime, and the shared iCloud/Keychain entitlements remain enabled. It attempts to migrate device-local JSON settings from earlier sandboxed Mac builds; SSH credentials stay in Keychain.
 
