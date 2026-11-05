@@ -2,6 +2,11 @@
 
 Changes are listed by app version and build number, newest first.
 
+## 1.0 (19) — 2026-11-05
+
+- Echo single-row Codex prompt edits immediately on Mac while waiting for tmux, then reconcile remote captures without duplicating input. Clear predictions on failed input, window/connection changes, unsupported controls, and a two-second timeout.
+- Show the solid cursor at enabled Codex prompts even when the remote app hides its terminal cursor, including while typing locally in Smart, Original, and Fit window.
+
 ## 1.0 (18) — 2026-11-02
 
 - Use steady cursors throughout the Mac app, without pulsing. Keep the Smart cursor tied to held screen content when Live is paused.

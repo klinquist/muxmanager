@@ -35,6 +35,33 @@ final class MacAppTests: XCTestCase {
     }
 
     @MainActor
+    func testOptimisticCodexCursorRendering() throws {
+        var prediction = CodexInputPrediction()
+        prediction.observe(grid: ["› "], joined: "› ",
+            cursor: TerminalCursor(row: 0, column: 2, visible: false, smartOffset: 2), columns: 80)
+        XCTAssertTrue(prediction.type(Data("hi🙂".utf8)))
+        let projected = try XCTUnwrap(prediction.projection)
+        let reading = MacReadingScroll(frame: NSRect(x: 0, y: 0, width: 360, height: 200))
+        let window = NSWindow(contentRect: reading.frame, styleMask: .borderless, backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = reading
+        defer { window.close() }
+        reading.text.textStorage?.setAttributedString(MacTerminalStyle.attributed(TerminalCaptureStyle.parse(projected.joined), size: 14))
+        reading.text.terminalCursorOffset = projected.cursor.smartOffset
+        reading.layoutSubtreeIfNeeded(); reading.layoutText(); reading.text.layoutSubtreeIfNeeded()
+        XCTAssertEqual(reading.text.terminalCursorOffset, "› hi🙂".utf16.count)
+        XCTAssertGreaterThan(try XCTUnwrap(reading.text.terminalCaretRect).height, 0)
+        XCTAssertTrue(reading.text.terminalCaretIsSolid)
+
+        let raw = MacTerminalScroll(inputOnly: false)
+        raw.frame = reading.frame; raw.columns = 80; raw.liveRow = 0
+        raw.apply(TerminalSnapshot.capture(grid: projected.grid, remoteRows: 1,
+            x: projected.cursor.column, y: 0, applicationCursor: false, keypad: false, visible: projected.cursor.visible), follow: true)
+        XCTAssertEqual(raw.terminal.getTerminal().getCursorLocation().x, 6)
+        XCTAssertEqual(raw.terminal.getTerminal().options.cursorStyle.tagName, "steadyBlock")
+    }
+
+    @MainActor
     func testBuiltInLocalConnectionAndTmux() async throws {
         let model = AppModel(library: LibraryStore())
         XCTAssertEqual(model.connectionProfiles.first?.id, ConnectionProfile.localMacID)

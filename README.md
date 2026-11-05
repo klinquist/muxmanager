@@ -37,7 +37,7 @@ Sync runs automatically when the app becomes active, after edits, and periodical
 
 ## macOS
 
-[Download Mux Manager for Mac — version 1.0, build 18](https://linquist.com/muxmanager/mac/). The universal app supports Apple Silicon and Intel Macs running **macOS 15 or later**. Unzip it, move **Mux Manager.app** to Applications, and open it.
+[Download Mux Manager for Mac — version 1.0, build 19](https://linquist.com/muxmanager/mac/). The universal app supports Apple Silicon and Intel Macs running **macOS 15 or later**. Unzip it, move **Mux Manager.app** to Applications, and open it.
 
 Open **`MuxManagerMac.xcodeproj`**, select **MuxManagerMac**, and choose My Mac to build from source. It uses the same two direct libraries and pinned versions as iOS. Set your signing team/bundle/container in `Config/Local.xcconfig` as above; enable the same CloudKit container for the Mac App ID. Production downloads use Production CloudKit and the same Keychain access group as the iPhone/iPad release. Sign in to the same Apple Account and enable iCloud Keychain to receive saved connections and credentials. Development and Production databases remain separate.
 
@@ -52,7 +52,7 @@ The native AppKit terminal supports selection, Command-C/Command-V, horizontal p
 - **Shift-Command-T:** focus the terminal.
 - **Return, Tab, Up/Down, Shift-Tab:** direct terminal keys; shell history and completion run remotely.
 
-Mac terminal input stays literal; Compose remains available on iPhone/iPad. Connections and eligible Codex notification checks continue when another app is active. A sleeping Mac cannot monitor remote work. Quit disconnects this app's clients and attempts to restore Fit sizing; remote tmux sessions continue. Cross-device sync and real sleep/network recovery still need acceptance testing on your devices.
+Mac terminal input stays literal; Compose remains available on iPhone/iPad. Single-row Codex prompt editing appears immediately while remote input is in flight, with a solid cursor in Smart, Original, and Fit window. Local predictions reconcile with remote captures; unconfirmed edits expire after two seconds without further typing. Enter, paste, wrapping, and unsupported editing controls use remote rendering. Connections and eligible Codex notification checks continue when another app is active. A sleeping Mac cannot monitor remote work. Quit disconnects this app's clients and attempts to restore Fit sizing; remote tmux sessions continue. Cross-device sync and real sleep/network recovery still need acceptance testing on your devices.
 
 ```sh
 xcodebuild -project MuxManagerMac.xcodeproj -scheme MuxManagerMac \

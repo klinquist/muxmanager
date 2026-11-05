@@ -9,14 +9,32 @@ final class HostWorkspace: ObservableObject, Identifiable {
     let id: UUID
     @Published var profile: ConnectionProfile
     @Published private(set) var state: State = .disconnected {
-        didSet { if oldValue != state { record("state", stateText) } }
+        didSet {
+            if oldValue != state {
+                record("state", stateText)
+                #if os(macOS)
+                cancelMacPrediction()
+                macSnapshot = nil
+                #endif
+            }
+        }
     }
     @Published private(set) var diagnostics = DiagnosticBuffer()
     @Published private(set) var connectionProgress: String?
     @Published private(set) var sessions: [RemoteSession] = []
     @Published private(set) var windows: [RemoteWindow] = []
     @Published private(set) var selectedSessionID: String?
-    @Published private(set) var selectedWindowID: String?
+    @Published private(set) var selectedWindowID: String? {
+        didSet {
+            #if os(macOS)
+            if oldValue != selectedWindowID {
+                macPrediction.reset(); macPredictionExpiry?.cancel(); macSnapshot = nil
+                macPredictionSuspendedAt = nil; macPredictionEpoch += 1
+                terminalCursor = nil
+            }
+            #endif
+        }
+    }
     @Published private(set) var closedWindowRevision = 0
     @Published private(set) var notificationFocusRevision = 0
     @Published private(set) var connectionRecoveryRevision = 0
@@ -77,10 +95,68 @@ final class HostWorkspace: ObservableObject, Identifiable {
     private final class KeyBatch {
         var data: Data
         var sealed = false
+        var revision: Int
         let generation: UUID
         let pane: String
-        init(_ data: Data, generation: UUID, pane: String) { self.data = data; self.generation = generation; self.pane = pane }
+        init(_ data: Data, revision: Int, generation: UUID, pane: String) { self.data = data; self.revision = revision; self.generation = generation; self.pane = pane }
     }
+    #if os(macOS)
+    private struct MacSnapshot {
+        let pane: String
+        let grid: [String]
+        let joined: String
+        let cursor: TerminalCursor
+        let rows: Int
+        let applicationCursor: Bool
+        let keypad: Bool
+    }
+    private var macSnapshot: MacSnapshot?
+    private var macPrediction = CodexInputPrediction()
+    private var macPredictionExpiry: Task<Void, Never>?
+    // A capture started before an unsupported key/paste must not re-enable
+    // prediction from an old prompt. Resume only after that input is confirmed.
+    private var macPredictionSuspendedAt: Int?
+    private var macConfirmedInputRevision = 0
+    private var macPredictionEpoch = 0
+
+    private func predictMacInput(_ bytes: Data) {
+        guard terminalMode, directInput else { return }
+        macPredictionExpiry?.cancel()
+        if !macPrediction.type(bytes) {
+            macPredictionSuspendedAt = inputRevision
+            macPredictionEpoch += 1
+        }
+        renderMacSnapshot()
+        if macPrediction.hasPendingInput {
+            macPredictionExpiry = Task { [weak self] in
+                do { try await Task.sleep(for: .seconds(2)) } catch { return }
+                self?.cancelMacPrediction()
+            }
+        }
+    }
+
+    private func cancelMacPrediction() {
+        macPredictionExpiry?.cancel()
+        macPrediction.reset()
+        macPredictionSuspendedAt = inputRevision
+        macPredictionEpoch += 1
+        renderMacSnapshot()
+    }
+
+    private func renderMacSnapshot() {
+        guard let snapshot = macSnapshot, snapshot.pane == selectedWindow?.paneID else { return }
+        let projected = macPrediction.projection
+        let cursor = projected?.cursor ?? snapshot.cursor
+        let joined = projected?.joined ?? snapshot.joined
+        let prose = TerminalSnapshot.trimmingBlankLines(joined.components(separatedBy: "\n"), keepingCursorAt: cursor.visible ? cursor.smartOffset : nil)
+        let terminal = TerminalSnapshot.capture(grid: projected?.grid ?? snapshot.grid, remoteRows: snapshot.rows,
+            x: cursor.column, y: cursor.row - max(0, snapshot.grid.count - snapshot.rows),
+            applicationCursor: snapshot.applicationCursor, keypad: snapshot.keypad, visible: cursor.visible)
+        terminalCursor = cursor
+        if terminalCapture != terminal { terminalCapture = terminal; snapshotRevision += 1 }
+        if joinedCapture != prose { joinedCapture = prose }
+    }
+    #endif
     private var pendingKeys: KeyBatch?
     private var pollingGeneration = UUID()
     private var drafts: [String: String] = [:]
@@ -834,16 +910,19 @@ final class HostWorkspace: ObservableObject, Identifiable {
             if bytes.count == 1, let first = bytes.first, (64...127).contains(first) { input = Data([first & 0x1f]) }
             controlModifier = false
         }
+        #if os(macOS)
+        predictMacInput(input)
+        #endif
         let generation = connectionGeneration
         // Coalesce only adjacent, unsent keystrokes. Paste remains an ordered
         // barrier, and a dropped connection never replays a pending batch.
         if !input.contains(10), let batch = pendingKeys, !batch.sealed, batch.generation == generation, batch.pane == pane {
-            batch.data.append(input)
+            batch.data.append(input); batch.revision = inputRevision
             await inputTail?.value
             return
         }
         pendingKeys?.sealed = true
-        let batch = KeyBatch(input, generation: generation, pane: pane)
+        let batch = KeyBatch(input, revision: inputRevision, generation: generation, pane: pane)
         batch.sealed = input.contains(10)
         pendingKeys = batch
         let previous = inputTail
@@ -860,9 +939,17 @@ final class HostWorkspace: ObservableObject, Identifiable {
                     let pending = self.incompleteCompletions.removeValue(forKey: pane)
                     if input.contains(13), let pending, self.draft == pending.draft { self.draft = "" }
                 }
+                #if os(macOS)
+                if self.connectionGeneration == generation { self.macConfirmedInputRevision = max(self.macConfirmedInputRevision, batch.revision) }
+                #endif
                 self.requestSnapshot()
             }
-            catch { self.error = "Input was not confirmed. Reconnect and inspect the terminal. \(error.localizedDescription)" }
+            catch {
+                #if os(macOS)
+                if self.connectionGeneration == generation { self.cancelMacPrediction() }
+                #endif
+                self.error = "Input was not confirmed. Reconnect and inspect the terminal. \(error.localizedDescription)"
+            }
         }
         inputTail = task
         await task.value
@@ -876,16 +963,26 @@ final class HostWorkspace: ObservableObject, Identifiable {
               self.connectionIntent == connectionIntent,
               let window = selectedWindow, window.id == windowID else { return }
         inputRevision += 1; controlModifier = false
+        #if os(macOS)
+        cancelMacPrediction()
+        #endif
         pendingKeys?.sealed = true
         let previous = inputTail
         let generation = connectionGeneration
         let pane = window.paneID
+        let revision = inputRevision
         let task = Task { [weak self] in
             await previous?.value
             guard let self, self.connectionGeneration == generation, self.isConnected,
                   self.connectionIntent == connectionIntent, self.terminalMode,
                   self.selectedWindowID == windowID, self.selectedWindow?.paneID == pane else { return }
-            do { try await self.paste(text, pane: pane, submit: false) }
+            do {
+                try await self.paste(text, pane: pane, submit: false)
+                #if os(macOS)
+                if self.connectionGeneration == generation { self.macConfirmedInputRevision = max(self.macConfirmedInputRevision, revision) }
+                #endif
+                self.requestSnapshot()
+            }
             catch { self.error = "Paste was not confirmed. Check the terminal before pasting again. \(error.localizedDescription)" }
         }
         inputTail = task
@@ -1101,6 +1198,10 @@ final class HostWorkspace: ObservableObject, Identifiable {
         let generation = connectionGeneration
         guard !isBackgrounded, let pane = selectedWindow?.paneID, !refreshInProgress else { return }
         refreshInProgress = true; dirty = false
+        #if os(macOS)
+        let predictionEpoch = macPredictionEpoch
+        let canObservePrediction = macPredictionSuspendedAt.map { $0 <= macConfirmedInputRevision } ?? true
+        #endif
         defer { refreshInProgress = false }
         let metadata = try await command("display-message -p -t \(TmuxCommand.quote(pane)) '#{pane_width} #{pane_height} #{cursor_x} #{cursor_y} #{keypad_cursor_flag} #{keypad_flag} #{cursor_flag} #{history_size} #{history_limit} #{alternate_on}'")
         let fields = metadata.joined().split(separator: " ")
@@ -1122,18 +1223,29 @@ final class HostWorkspace: ObservableObject, Identifiable {
         terminalLiveRow = max(lastTextRow, max(0, grid.count - rows) + y)
         let absoluteCursorRow = TerminalSnapshot.cursorRow(gridCount: grid.count, remoteRows: rows, cursorY: y)
         let smartOffset = TerminalSnapshot.smartCursorOffset(grid: grid, joined: joined.joined(separator: "\n"), row: absoluteCursorRow, column: x, columns: cols)
-        let prose = TerminalSnapshot.trimmingBlankLines(joined, keepingCursorAt: fields.count > 6 && fields[6] == "0" ? nil : smartOffset)
         applicationCursorKeys = fields.count > 4 && fields[4] == "1"
         let cursorVisible = fields.count <= 6 || fields[6] != "0"
         terminalBufferRows = max(1, grid.count)
-        terminalCursor = TerminalCursor(row: absoluteCursorRow, column: x, visible: cursorVisible,
-            smartOffset: smartOffset)
+        remoteColumns = cols; remoteRows = rows
+        #if os(macOS)
+        let snapshot = MacSnapshot(pane: pane, grid: grid, joined: joined.joined(separator: "\n"),
+            cursor: TerminalCursor(row: absoluteCursorRow, column: x, visible: cursorVisible, smartOffset: smartOffset),
+            rows: rows, applicationCursor: applicationCursorKeys, keypad: fields.count > 5 && fields[5] == "1")
+        macSnapshot = snapshot
+        if canObservePrediction && predictionEpoch == macPredictionEpoch {
+            macPrediction.observe(grid: grid, joined: snapshot.joined, cursor: snapshot.cursor, columns: cols)
+            macPredictionSuspendedAt = nil
+        }
+        renderMacSnapshot()
+        if !macPrediction.hasPendingInput { macPredictionExpiry?.cancel() }
+        #else
+        let prose = TerminalSnapshot.trimmingBlankLines(joined, keepingCursorAt: cursorVisible ? smartOffset : nil)
+        terminalCursor = TerminalCursor(row: absoluteCursorRow, column: x, visible: cursorVisible, smartOffset: smartOffset)
         let terminal = TerminalSnapshot.capture(grid: grid, remoteRows: rows, x: x, y: y,
             applicationCursor: applicationCursorKeys, keypad: fields.count > 5 && fields[5] == "1", visible: cursorVisible)
-        if terminalCapture != terminal || remoteColumns != cols || remoteRows != rows {
-            remoteColumns = cols; remoteRows = rows; terminalCapture = terminal; snapshotRevision += 1
-        }
+        if terminalCapture != terminal { terminalCapture = terminal; snapshotRevision += 1 }
         if joinedCapture != prose { joinedCapture = prose }
+        #endif
     }
 
     func configureAttention(enabled: Bool, handler: @escaping (CodexPaneTarget, CodexAttentionState) -> Void) {
@@ -1353,10 +1465,14 @@ private actor AttentionFixturePeer {
     private var hiddenWindow: Int?
     private var inputDelay: Duration?
     private var rejectInput = false
+    private var cursorMetadata = "120 36 0 1 0 0 1 0 2000 0"
     func install(_ value: ControlChannel?) { channel = value }
     func screen(_ pane: String, _ value: String) { screens[pane] = value }
     func hideWindow(_ index: Int) { hiddenWindow = index }
     func allowInput(delay: Duration, reject: Bool) { inputDelay = delay; rejectInput = reject }
+    func cursor(column: Int, row: Int, visible: Bool = true) {
+        cursorMetadata = "120 36 \(column) \(row) 0 0 \(visible ? 1 : 0) 0 2000 0"
+    }
     func addPollingCandidates() {
         additionalTargets = true
         screens["%20"] = "Development server listening on port 3000"
@@ -1381,7 +1497,7 @@ private actor AttentionFixturePeer {
         } else if command.hasPrefix("capture-pane"), let pane = screens.keys.first(where: { command.hasSuffix(TmuxCommand.quote($0)) }) {
             reads[pane, default: 0] += 1
             lines = screens[pane]!.components(separatedBy: "\n")
-        } else if command.hasPrefix("display-message") { lines = ["120 36 0 1 0 0 1 0 2000 0"] }
+        } else if command.hasPrefix("display-message") { lines = [cursorMetadata] }
         else if command.hasPrefix("refresh-client") { lines = [] }
         else { throw MuxError.message("Unexpected fixture command.") }
         sequence += 1
@@ -1391,6 +1507,7 @@ private actor AttentionFixturePeer {
 }
 
 extension HostWorkspace {
+    #if os(macOS)
     func validateInteractiveInput() async -> [String: Bool] {
         configureScreenshot(scene: "mac"); setTerminalMode(true)
         let peer = AttentionFixturePeer()
@@ -1399,15 +1516,27 @@ extension HostWorkspace {
         await peer.install(channel); await channel.receive(Data("%begin 0 0 0\n%end 0 0 0\n".utf8))
         control = channel
         var checks: [String: Bool] = [:]
+        await peer.screen("%1", "Earlier output\n› \nfooter")
+        await peer.cursor(column: 2, row: 1, visible: false)
+        try? await refreshSnapshot()
+        checks["hiddenCodexCursorIsVisible"] = terminalCursor?.visible == true && terminalCursor?.smartOffset == "Earlier output\n› ".utf16.count
         let first = Task { await self.sendKey(Data("a".utf8)) }
         try? await Task.sleep(for: .milliseconds(20))
+        checks["typingEchoesBeforeNetworkAcknowledgement"] = joinedCapture.contains("› a") && terminalCursor?.column == 3
         var pending: [Task<Void, Never>] = []
         for letter in "bcdefghij" {
             pending.append(Task { await self.sendKey(Data(String(letter).utf8)) })
             try? await Task.sleep(for: .milliseconds(2))
         }
+        checks["rapidTypingKeepsEntireLocalPrediction"] = joinedCapture.contains("› abcdefghij") && terminalCursor?.column == 12
         await first.value
         for task in pending { await task.value }
+        try? await refreshSnapshot()
+        checks["staleSnapshotKeepsPendingInput"] = joinedCapture.contains("› abcdefghij")
+        await peer.screen("%1", "Earlier output\n› abcdefghij\nfooter")
+        await peer.cursor(column: 12, row: 1, visible: false)
+        try? await refreshSnapshot()
+        checks["remoteEchoDoesNotDuplicateInput"] = joinedCapture == "Earlier output\n› abcdefghij\nfooter" && !macPrediction.hasPendingInput
         var commands = await peer.commands
         let keys = commands.filter { $0.hasPrefix("send-keys") }
         checks["slowLinkCoalescesAdjacentKeys"] = keys.count == 2 && keys[0].hasSuffix("61") && keys[1].hasSuffix("62 63 64 65 66 67 68 69 6a")
@@ -1424,6 +1553,7 @@ extension HostWorkspace {
         checks["pasteRemainsAnOrderedBarrier"] = before != nil && barrier != nil && after != nil && before! < barrier! && barrier! < after!
         await peer.allowInput(delay: .zero, reject: false)
         await peer.screen("%1", "fresh cursor output\n$ zsh")
+        await peer.cursor(column: 0, row: 1)
         let revision = snapshotRevision
         startPolling()
         let began = ContinuousClock.now
@@ -1432,9 +1562,23 @@ extension HostWorkspace {
             try? await Task.sleep(for: .milliseconds(5))
         }
         checks["typingRefreshesBeforeOldPollingTick"] = snapshotRevision > revision && began.duration(to: .now) < .milliseconds(250)
-        pollTask?.cancel(); pollWake?.finish(); await channel.close(); await peer.install(nil); control = nil
+        pollTask?.cancel(); pollWake?.finish(); await pollTask?.value
+        await peer.screen("%1", "Earlier output\n› \nfooter")
+        await peer.cursor(column: 2, row: 1, visible: false)
+        try? await refreshSnapshot()
+        await peer.allowInput(delay: .milliseconds(100), reject: true)
+        let rejected = Task { await self.sendKey(Data("q".utf8)) }
+        try? await Task.sleep(for: .milliseconds(20))
+        checks["unconfirmedInputInitiallyEchoes"] = joinedCapture.contains("› q")
+        await rejected.value
+        checks["failedInputRollsBackPrediction"] = joinedCapture == "Earlier output\n› \nfooter" && !macPrediction.hasPendingInput && error != nil
+        selectedWindowID = "@2"
+        checks["windowChangeClearsPredictionAndCursor"] = macSnapshot == nil && macPrediction.projection == nil && terminalCursor == nil
+        await channel.close(); await peer.install(nil); control = nil
         return checks
     }
+
+    #endif
 
     func validateComposerSend(initialChecks: [String: Bool], pendingChecks: () -> [String: Bool]) async {
         guard LibraryStore.screenshotScene == "compose" else { return }
